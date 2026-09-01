@@ -1,0 +1,15 @@
+{
+	"name": "pi-web-fetch",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"defuddle": "^0.19.2",
+		"linkedom": "^0.18.13",
+		"lodash": "^4.17.21",
+		"mime-types": "^3.0.2",
+		"wreq-js": "^2.3.1"
+	}
+}

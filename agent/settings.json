@@ -1,0 +1,29 @@
+{
+  "lastChangelogVersion": "0.84.4",
+  "theme": "tokyonight",
+  "packages": [
+    "npm:@cortexkit/pi-anthropic-auth",
+    "npm:@sreetej510/pi-usage",
+    "npm:pi-context-view",
+    "npm:pi-mcp-adapter"
+  ],
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "always",
+  "doubleEscapeAction": "tree",
+  "tuiMode": "regular",
+  "warnings": {
+    "anthropicExtraUsage": false
+  },
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-fable-5",
+  "defaultThinkingLevel": "medium",
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "markdown": {
+    "mermaid": "streaming"
+  },
+  "collapseChangelog": true,
+  "treeFilterMode": "default"
+}
