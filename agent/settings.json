@@ -4,8 +4,7 @@
   "packages": [
     "npm:@cortexkit/pi-anthropic-auth",
     "npm:@sreetej510/pi-usage",
-    "npm:pi-context-view",
-    "npm:pi-mcp-adapter"
+    "npm:pi-context-view"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -25,5 +24,8 @@
     "mermaid": "streaming"
   },
   "collapseChangelog": true,
-  "treeFilterMode": "default"
+  "treeFilterMode": "default",
+  "compaction": {
+    "enabled": true
+  }
 }

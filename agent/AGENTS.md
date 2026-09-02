@@ -19,11 +19,12 @@ Technical communication:
 
 - Use call stack and call stack diffs to visualize/communicate code/architecture/module/system/process/etc.
 
-Available Toolings:
+Additional toolings:
 
 - `gh`, `git`. Always use `gh` for GitHub interactions.
 - `rg`, `ast-grep`. Always use `rg` over `grep`. Use `ast-grep` for structural code search
 - `jq`, `curl` + all standard unix tools (`awk`, `sed`, `tr`, ...)
+- `sentry-cli`. Already authenticated. (org: realm-technologies-eu, project: web)
 
 Background tasks:
 

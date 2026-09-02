@@ -39,6 +39,8 @@ importers:
         specifier: ^1.7.5
         version: 1.7.5
 
+  compact: {}
+
   tmux:
     dependencies:
       '@pi-ext/tmux-layout':

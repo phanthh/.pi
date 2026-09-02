@@ -2,7 +2,7 @@
 name: scout
 description: Fast read-only codebase evidence gathering; not for analysis or decisions
 model: anthropic/claude-opus-5
-thinking: low
+thinking: medium
 tools: read, bash
 system-prompt: replace
 auto-exit: true
