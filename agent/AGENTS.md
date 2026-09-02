@@ -19,26 +19,25 @@ Technical communication:
 
 - Use call stack and call stack diffs to visualize/communicate code/architecture/module/system/process/etc.
 
-Additional toolings:
+CLI tools:
 
-- `gh`, `git`. Always use `gh` for GitHub interactions.
-- `rg`, `ast-grep`. Always use `rg` over `grep`. Use `ast-grep` for structural code search
-- `jq`, `curl` + all standard unix tools (`awk`, `sed`, `tr`, ...)
+- Git: `gh`, `git`. Always use `gh` for GitHub interactions.
+- Exploration: `rg`, `fd`, `ast-grep`. Always use `rg` over `grep`, `fd` over `find`. Use `ast-grep` for structural code search.
+- Transformation: `jq` + all standard unix tools (`head`, `tail`, `awk`, `sed`, `tr`,`xargs`, ...)
 - `sentry-cli`. Already authenticated. (org: realm-technologies-eu, project: web)
 
-Background tasks:
+Asynchronous tasks:
 
 - You are always in a tmux session.
-- Use tmux for all long-running background tasks (e.g. tests) + subagents.
-- Typechecks, linting and formatting are considered short tasks. Don't background them.
+- Use tmux for asynchronous background tasks (e.g. dev servers) + subagents.
+- Typechecks, tests, linting and formatting are considered synchronous tasks.
 
 Write-it-down enforcement:
-
+- `/tmp` is your private scratchpad directory. Each subagent has its own isolated clean `/tmp`.
 - If you want to remember something, write it down. Do not rely on memory.
-- Use TODOS.md, NOTES.md, SPEC.md, etc as temporary off-loading of context, free up your brain for more important things.
-- To sync and have a shared understanding with others (e.g. subagents), write down important shared understanding/context and reference it when communicating. Do not write to /tmp, each subagents (and yourself) is sandboxed and have their own clean /tmp
+- Write `TODOS.md`, `NOTES.md`, etc. as temporary off-loading of context/brain memory.
+- Write down important shared understanding/context notes to your working directory + reference it when communicating with subagents.
 - Clean up all temporary written-down notes after use.
 
 General rules:
-
-- All exploration should be done via scout subagents if possible.
+- All exploration should be done via scout subagents (if possible).
