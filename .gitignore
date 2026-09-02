@@ -9,6 +9,7 @@
 !/agent/AGENTS.md
 !/agent/settings.json
 !/agent/web-search.json
+!/skills/
 
 # sensible ignores
 node_modules/

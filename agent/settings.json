@@ -4,7 +4,8 @@
   "packages": [
     "npm:@cortexkit/pi-anthropic-auth",
     "npm:@sreetej510/pi-usage",
-    "npm:pi-context-view"
+    "npm:pi-context-view",
+    "npm:pi-tps-meter"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -27,5 +28,6 @@
   "treeFilterMode": "default",
   "compaction": {
     "enabled": true
-  }
+  },
+  "hideThinkingBlock": true
 }
