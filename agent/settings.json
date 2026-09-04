@@ -4,8 +4,7 @@
   "packages": [
     "npm:@cortexkit/pi-anthropic-auth",
     "npm:@sreetej510/pi-usage",
-    "npm:pi-context-view",
-    "npm:pi-tps-meter"
+    "npm:pi-context-view"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -16,7 +15,7 @@
     "anthropicExtraUsage": false
   },
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5",
+  "defaultModel": "claude-fable-5-1",
   "defaultThinkingLevel": "medium",
   "terminal": {
     "showTerminalProgress": true
