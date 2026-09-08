@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.4",
+  "lastChangelogVersion": "0.85.1",
   "theme": "tokyonight",
   "packages": [
     "npm:@cortexkit/pi-anthropic-auth",
@@ -26,6 +26,7 @@
   "collapseChangelog": true,
   "treeFilterMode": "default",
   "compaction": {
+    "reserveTokens": 500000,
     "enabled": true
   },
   "hideThinkingBlock": true
