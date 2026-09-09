@@ -29,6 +29,7 @@ Ponytail mindset (what you build — YAGNI extremist, deletion before addition):
 CLI tools:
 
 - `git`. All GitHub ops always via `gh`.
+- Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending). Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
 - Exploration: `rg` over `grep`, `fd` over `find`, `ast-grep` for structural search.
 - Transformation: `jq` + standard unix tools (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...).
 - Browser use: global `chromium` binary (`/usr/bin/chromium`) + Python `playwright` lib installed.
@@ -45,6 +46,7 @@ Write-it-down:
 - Shared context notes → current working directory; reference when messaging subagents.
 - Clean up notes after use.
 
-General:
-
+General rules:
 - Exploration must be done via scout subagents when possible.
+- Always code review you subagents' work.
+- Always code review for changes/works with more than +-500 lines in total

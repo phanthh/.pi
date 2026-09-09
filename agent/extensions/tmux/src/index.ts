@@ -3,6 +3,8 @@
  *
  * Actions:
  *   run   — create a named pane (split right) and run a command in it
+ *           (autoExit: true → wait for completion in background, steer
+ *            output + exit code back to the agent, close the pane)
  *   read  — capture output from a named pane
  *   send  — send keys to a named pane (C-c, Enter, q, etc.)
  *   stop  — kill a named pane
@@ -17,7 +19,7 @@ import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { closeWorkerPane, createWorkerPane } from "@pi-ext/tmux-layout";
+import { closeWorkerPane, createWorkerPane, isPaneAlive } from "@pi-ext/tmux-layout";
 
 interface PaneInfo {
 	name: string;
@@ -53,6 +55,15 @@ export default function (pi: ExtensionAPI) {
 
 	let myPaneId: string | null = null;
 	let myWindowId: string | null = null;
+	// paneId → wait-for channel of an active autoExit watcher
+	const watchers = new Map<string, string>();
+
+	// Kill pane; wake its autoExit watcher (if any) so it reports instead of hanging forever.
+	async function killPane(paneId: string) {
+		const ch = watchers.get(paneId);
+		closeWorkerPane(paneId);
+		if (ch) await pi.exec("tmux", ["wait-for", "-S", ch]);
+	}
 
 	// Discover our own pane/window/session on startup
 	pi.on("session_start", async () => {
@@ -171,6 +182,12 @@ export default function (pi: ExtensionAPI) {
 				Type.Boolean({ description: "Kill existing pane before starting (for run action, default: false)" }),
 			),
 			cwd: Type.Optional(Type.String({ description: "Working directory (for run action)" })),
+			autoExit: Type.Optional(
+				Type.Boolean({
+					description:
+						"For run action: when the command finishes, close the pane and deliver its output + exit code back to you automatically (default: false). Use for one-shot commands like builds/tests; do not poll.",
+				}),
+			),
 		}),
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -178,7 +195,7 @@ export default function (pi: ExtensionAPI) {
 
 			switch (action) {
 				case "run": {
-					const { pane, command, restart, cwd } = params;
+					const { pane, command, restart, cwd, autoExit } = params;
 					if (!pane) throw new Error("'pane' is required for run");
 					if (!command) throw new Error("'command' is required for run");
 
@@ -191,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 						);
 					}
 					if (existing) {
-						closeWorkerPane(existing.paneId);
+						await killPane(existing.paneId);
 					}
 
 					// Unified layout: right column, stacked + rebalanced.
@@ -201,22 +218,89 @@ export default function (pi: ExtensionAPI) {
 						cwd,
 					});
 
+					// autoExit: wrap so the shell prints an exit marker and signals a tmux channel when done.
+					// trap INT: otherwise C-c makes the shell drop the rest of the line and the watcher hangs.
+					const channel = `pi-tmux-${newPaneId.slice(1)}-${Date.now()}`;
+					const shellCmd = autoExit
+						? `trap ':' INT; ( ${command} ); printf '\\n[pi:exit %d]\\n' $?; trap - INT; tmux wait-for -S ${channel}`
+						: command;
+
 					// Send command (literal text + Enter)
-					await pi.exec("tmux", ["send-keys", "-l", "-t", newPaneId, command]);
+					await pi.exec("tmux", ["send-keys", "-l", "-t", newPaneId, shellCmd]);
 					await pi.exec("tmux", ["send-keys", "-t", newPaneId, "Enter"]);
+
+					if (autoExit) {
+						const started = Date.now();
+						watchers.set(newPaneId, channel);
+						pi.exec("tmux", ["wait-for", channel])
+							.then(async () => {
+								watchers.delete(newPaneId);
+								if (!isPaneAlive(newPaneId)) {
+									pi.sendMessage(
+										{
+											customType: "tmux_result",
+											content: `tmux pane '${pane}' killed before '${command}' finished (stop/restart). No output captured.`,
+											display: true,
+											details: { pane, command, exitCode: -1, elapsed: Math.round((Date.now() - started) / 1000) },
+										},
+										{ triggerTurn: false },
+									);
+									return;
+								}
+								const full = await capturePane(newPaneId, 100000);
+								// Last marker only; shell prompt may already be printed after it.
+								const m = [...full.matchAll(/\[pi:exit (\d+)\]/g)].at(-1);
+								const exitCode = m ? Number(m[1]) : -1;
+								const output = m ? full.slice(0, m.index).replace(/\n+$/, "\n") : full;
+								const truncation = truncateTail(output, {
+									maxLines: DEFAULT_MAX_LINES,
+									maxBytes: DEFAULT_MAX_BYTES,
+								});
+								let text = truncation.content;
+								if (truncation.truncated) {
+									text = `[Showing last ${truncation.outputLines} of ${truncation.totalLines} lines]\n${text}`;
+								}
+								const elapsed = Math.round((Date.now() - started) / 1000);
+								if (isPaneAlive(newPaneId)) closeWorkerPane(newPaneId);
+								pi.sendMessage(
+									{
+										customType: "tmux_result",
+										content: `tmux pane '${pane}' finished: '${command}' (exit ${exitCode}, ${elapsed}s). Pane closed.\n\n${text}`,
+										display: true,
+										details: { pane, command, exitCode, elapsed },
+									},
+									{ triggerTurn: true, deliverAs: "steer" },
+								);
+							})
+							.catch((err) => {
+								watchers.delete(newPaneId);
+								pi.sendMessage(
+									{
+										customType: "tmux_result",
+										content: `tmux pane '${pane}' watcher error: ${err?.message ?? String(err)}`,
+										display: true,
+										details: { pane, command, exitCode: -1, elapsed: 0, error: String(err) },
+									},
+									{ triggerTurn: true, deliverAs: "steer" },
+								);
+							});
+					}
 
 					// Wait briefly and capture initial output
 					await new Promise((r) => setTimeout(r, 1500));
-					const initialOutput = await capturePane(newPaneId, 20);
+					const initialOutput = isPaneAlive(newPaneId) ? await capturePane(newPaneId, 20) : "(already finished)";
 
+					const hint = autoExit
+						? "\n\n(autoExit: result will be delivered to you when the command finishes; do not poll.)"
+						: "";
 					return {
 						content: [
 							{
 								type: "text",
-								text: `Started '${command}' in pane '${pane}' (${newPaneId})\n\n${initialOutput}`,
+								text: `Started '${command}' in pane '${pane}' (${newPaneId})${hint}\n\n${initialOutput}`,
 							},
 						],
-						details: { action: "run", pane, paneId: newPaneId, command },
+						details: { action: "run", pane, paneId: newPaneId, command, autoExit: !!autoExit },
 					};
 				}
 
@@ -282,7 +366,7 @@ export default function (pi: ExtensionAPI) {
 						throw new Error("Refusing to kill the pane pi is running in.");
 					}
 
-					closeWorkerPane(existing.paneId);
+					await killPane(existing.paneId);
 
 					return {
 						content: [{ type: "text", text: `Stopped pane '${pane}'` }],
@@ -345,6 +429,7 @@ export default function (pi: ExtensionAPI) {
 				case "run": {
 					let t = theme.fg("success", `▶ ${details.pane}`);
 					t += theme.fg("dim", ` › ${details.command}`);
+					if (details.autoExit) t += theme.fg("muted", " (autoExit)");
 					return new Text(t, 0, 0);
 				}
 
@@ -396,5 +481,14 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		},
+	});
+
+	pi.registerMessageRenderer("tmux_result", (message, _options, theme) => {
+		const d = message.details as { pane: string; command: string; exitCode: number; elapsed: number } | undefined;
+		if (!d) return undefined;
+		const ok = d.exitCode === 0;
+		let t = theme.fg(ok ? "success" : "error", `${ok ? "✔" : "✖"} ${d.pane}`);
+		t += theme.fg("dim", ` › ${d.command} (exit ${d.exitCode}, ${d.elapsed}s)`);
+		return new Text(t, 0, 0);
 	});
 }
