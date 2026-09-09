@@ -48,5 +48,5 @@ Write-it-down:
 
 General rules:
 - Exploration must be done via scout subagents when possible.
-- Always code review you subagents' work.
-- Always code review for changes/works with more than +-500 lines in total
+- Always code review your subagents' work.
+- Always code review when your work add/remove +-500 lines in total
