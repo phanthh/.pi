@@ -67,6 +67,7 @@ Every child loads `child.ts` via `-e`:
 | `scout` | `anthropic/claude-opus-5:low` | Read-only evidence gathering |
 | `worker` | `anthropic/claude-opus-5:medium` | Small approved implementation tasks |
 | `delegate` | inherits the orchestrator's model and thinking level | General helper |
+| `researcher` | `anthropic/claude-opus-5:medium` | External web research → sourced brief |
 
 Precedence: `.pi/agents/` (project) > `~/.pi/agent/agents/` (global) > bundled.
 
@@ -96,7 +97,7 @@ tmux.ts      pane primitives + exit polling
 activity.ts  child activity snapshot (write/read/validate)
 status.ts    snapshot → status kind, transitions, status lines
 session.ts   child session seeding, summary extraction
-agents/      scout, worker, delegate
+agents/      scout, worker, delegate, researcher
 ```
 
 Typecheck: `tsgo --noEmit -p tsconfig.json` (paths point at the local pi checkout).

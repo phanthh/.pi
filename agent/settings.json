@@ -4,7 +4,8 @@
   "packages": [
     "npm:@cortexkit/pi-anthropic-auth",
     "npm:@sreetej510/pi-usage",
-    "npm:pi-context-view"
+    "npm:pi-context-view",
+    "npm:pi-mcp-adapter"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -15,7 +16,7 @@
     "anthropicExtraUsage": false
   },
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5",
+  "defaultModel": "claude-fable-5-1",
   "defaultThinkingLevel": "medium",
   "terminal": {
     "showTerminalProgress": true
@@ -26,7 +27,6 @@
   "collapseChangelog": true,
   "treeFilterMode": "default",
   "compaction": {
-    "reserveTokens": 500000,
     "enabled": true
   },
   "hideThinkingBlock": true

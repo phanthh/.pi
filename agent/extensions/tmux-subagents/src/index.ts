@@ -875,7 +875,7 @@ const SubagentParams = Type.Object({
   ),
   name: Type.Optional(Type.String({ description: "Display name for launch/resume (pane title, widget label)" })),
   task: Type.Optional(Type.String({ description: "Task prompt for launch" })),
-  agent: Type.Optional(Type.String({ description: "Agent definition to load defaults from, e.g. scout, worker, delegate" })),
+  agent: Type.Optional(Type.String({ description: "Agent definition to load defaults from, e.g. scout, worker, delegate, researcher" })),
   model: Type.Optional(Type.String({ description: "Model override; defaults to the agent's model, else this session's model" })),
   tools: Type.Optional(Type.String({ description: "Comma-separated tool allowlist override" })),
   skills: Type.Optional(Type.String({ description: "Comma-separated skills to auto-load" })),
