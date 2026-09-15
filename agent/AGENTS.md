@@ -47,6 +47,6 @@ Write-it-down:
 - Clean up notes after use.
 
 General rules:
-- Exploration must be done via scout subagents when possible.
+- Exploration must be done via scout and researcher subagents whenever possible.
 - Always code review your subagents' work.
 - Always code review when your work add/remove +-500 lines in total
