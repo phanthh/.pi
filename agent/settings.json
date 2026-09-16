@@ -16,7 +16,7 @@
     "anthropicExtraUsage": false
   },
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5-1",
+  "defaultModel": "claude-opus-5",
   "defaultThinkingLevel": "medium",
   "terminal": {
     "showTerminalProgress": true

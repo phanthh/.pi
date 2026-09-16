@@ -27,7 +27,7 @@ import {
 	type WorkspaceEdit,
 } from "vscode-languageserver-protocol";
 import { type Client, createClient } from "./client.ts";
-import { findRoot, loadServers, which } from "./servers.ts";
+import { findRoot, loadServers, resolveForRoot, which } from "./servers.ts";
 
 const OPERATIONS = [
 	"goToDefinition",
@@ -87,8 +87,9 @@ export default function (pi: ExtensionAPI) {
 		const servers = loadServers(cwd).filter((s) => s.extensions.includes(ext));
 		if (!servers.length) throw new Error(`No LSP server configured for "${ext}" files.`);
 		const result = await Promise.all(
-			servers.map((server) => {
-				const root = findRoot(file, server.roots, cwd);
+			servers.map((base) => {
+				const root = findRoot(file, base.roots, cwd);
+				const server = resolveForRoot(base, root);
 				const key = `${server.id}:${root}`;
 				if (broken.has(key)) throw new Error(broken.get(key));
 				const existing = clients.get(key);

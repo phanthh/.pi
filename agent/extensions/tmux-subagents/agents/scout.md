@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Fast read-only codebase evidence gathering; not for analysis or decisions
-model: anthropic/claude-opus-5
+model: openai-codex/gpt-5.6-terra
 thinking: medium
 tools: read, bash
 system-prompt: replace

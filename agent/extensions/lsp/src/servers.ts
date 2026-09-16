@@ -73,6 +73,21 @@ export function loadServers(cwd: string): ServerDef[] {
 	return [...merged.values()];
 }
 
+/** Per-root tweaks: pyright needs the project venv interpreter or imports resolve to system python. */
+export function resolveForRoot(server: ServerDef, root: string): ServerDef {
+	if (server.id !== "pyright") return server;
+	const venv = [".venv", "venv"].map((d) => join(root, d)).find((d) => existsSync(join(d, "bin", "python")));
+	if (!venv) return server;
+	const init = (server.initialization ?? {}) as Record<string, Record<string, unknown> | undefined>;
+	if (init.python?.pythonPath) return server;
+	const localServer = join(venv, "bin", "basedpyright-langserver");
+	return {
+		...server,
+		command: existsSync(localServer) ? [localServer, ...server.command.slice(1)] : server.command,
+		initialization: { ...init, python: { ...init.python, pythonPath: join(venv, "bin", "python") } },
+	};
+}
+
 export function which(bin: string): string | undefined {
 	if (bin.includes("/")) return existsSync(bin) ? bin : undefined;
 	for (const dir of (process.env.PATH ?? "").split(":")) {
