@@ -29,5 +29,7 @@
   "compaction": {
     "enabled": true
   },
-  "hideThinkingBlock": true
+  "hideThinkingBlock": true,
+  "outputPad": 1,
+  "showCacheMissNotices": true
 }
