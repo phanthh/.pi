@@ -2,10 +2,12 @@
   "lastChangelogVersion": "0.85.1",
   "theme": "tokyonight",
   "packages": [
-    "npm:@cortexkit/pi-anthropic-auth",
     "npm:@sreetej510/pi-usage",
     "npm:pi-context-view",
     "npm:pi-mcp-adapter"
+  ],
+  "extensions": [
+    "./extensions/anthropic-auth/packages/pi"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -31,5 +33,8 @@
   },
   "hideThinkingBlock": true,
   "outputPad": 1,
-  "showCacheMissNotices": true
+  "showCacheMissNotices": true,
+  "skills": [
+    "!**"
+  ]
 }

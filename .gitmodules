@@ -1,0 +1,4 @@
+[submodule "agent/extensions/anthropic-auth"]
+	path = agent/extensions/anthropic-auth
+	url = https://github.com/cortexkit/anthropic-auth.git
+	branch = main
