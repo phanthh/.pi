@@ -1,7 +1,7 @@
 ---
 name: delegate
 description: Lightweight general-purpose helper that inherits the parent model for focused delegated tasks
-tools: read, bash, edit, write
+tools: read, bash, edit, write, lsp, code_exec
 system-prompt: append
 auto-exit: true
 spawning: false

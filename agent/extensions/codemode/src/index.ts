@@ -6,13 +6,22 @@
  * Ported from pi-fabric (MIT, github.com/monotykamary/pi-fabric): TypeScript
  * kernel + QuickJS sandbox only. No Python kernel, MCP, agents, mesh, or memory.
  */
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { highlightCode, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { installToolCapture } from "./capture.ts";
 import { buildDeclarations } from "./declarations.ts";
 import { createDispatcher } from "./dispatch.ts";
-import { applyOutputBudget, FAILURE_BUDGET_CHARS, formatValue, SUCCESS_BUDGET_CHARS } from "./output.ts";
+import {
+	applyOutputBudget,
+	FAILURE_BUDGET_CHARS,
+	formatDisplayValue,
+	formatValue,
+	SUCCESS_BUDGET_CHARS,
+	truncateDisplay,
+} from "./output.ts";
 import { execute } from "./quickjs.ts";
+import { renderCodeResult } from "./render.ts";
 import { typeCheckGuestCode } from "./type-checker.ts";
 
 const TOOL_NAME = "code_exec";
@@ -105,6 +114,25 @@ export default function codeMode(pi: ExtensionAPI): void {
 			),
 		}),
 		prepareArguments: prepareArguments as any,
+		renderCall(args, theme, context) {
+			const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const code = args.code ?? "";
+			const title = theme.fg("toolTitle", theme.bold("code mode"));
+			const highlighted = highlightCode(code, "typescript").join("\n");
+			component.setText(highlighted ? `${title}\n\n${highlighted}` : `${title} ${theme.fg("toolOutput", "...")}`);
+			return component;
+		},
+		renderResult(result, { expanded }, theme) {
+			const displayText = (result.details as { displayText?: unknown } | undefined)?.displayText;
+			const output =
+				typeof displayText === "string"
+					? displayText
+					: result.content
+							.filter((item): item is { type: "text"; text: string } => item.type === "text")
+							.map((item) => item.text)
+							.join("\n");
+			return renderCodeResult(output.trim(), expanded, theme);
+		},
 		async execute(toolCallId, params, signal, _onUpdate, context: ExtensionContext) {
 			const tools = await capturedPromise;
 			const declarations = buildDeclarations(tools.list());
@@ -142,9 +170,13 @@ export default function codeMode(pi: ExtensionAPI): void {
 
 			const logs = result.logs.length > 0 ? `${result.logs.join("\n")}\n` : "";
 			const failed = result.terminationReason !== "completed";
+			const emptyResult = "(program returned no value)";
 			const body = failed
 				? `${logs}${result.error ?? "Execution failed"}`
-				: `${logs}${formatValue(result.value)}`.trim() || "(program returned no value)";
+				: `${logs}${formatValue(result.value)}`.trim() || emptyResult;
+			const displayBody = failed
+				? body
+				: `${logs}${formatDisplayValue(result.value)}`.trim() || emptyResult;
 			const { text } = applyOutputBudget(
 				body,
 				failed ? FAILURE_BUDGET_CHARS : SUCCESS_BUDGET_CHARS,
@@ -155,6 +187,10 @@ export default function codeMode(pi: ExtensionAPI): void {
 				details: {
 					terminationReason: result.terminationReason,
 					nestedCalls: dispatcher.callCount,
+					displayText: truncateDisplay(
+						displayBody,
+						failed ? FAILURE_BUDGET_CHARS : SUCCESS_BUDGET_CHARS,
+					),
 				},
 			};
 		},

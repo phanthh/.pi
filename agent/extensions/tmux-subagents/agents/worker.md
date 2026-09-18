@@ -1,9 +1,9 @@
 ---
 name: worker
 description: Focused implementation agent for small, approved coding tasks
-model: openai-codex/gpt-5.6-sol
+model: anthropic/claude-opus-5
 thinking: medium
-tools: read, bash, edit, write
+tools: read, bash, edit, write, lsp, code_exec
 system-prompt: replace
 auto-exit: true
 spawning: false

@@ -30,7 +30,7 @@ CLI tools:
 
 - `git`. All GitHub ops always via `gh`.
 - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending). Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
-- Exploration: `rg` over `grep`, `fd` over `find`, `ast-grep` for structural search.
+- Exploration: `lsp` for (functions, variables, etc,...). `rg` over `grep`, `fd` over `find`, `ast-grep` for structural search.
 - Transformation: `jq` + standard unix tools (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...).
 - Browser use: global `chromium` binary (`/usr/bin/chromium`) + Python `playwright` lib installed.
 - `sentry-cli`. Already authenticated. (org: realm-technologies-eu, project: web).
@@ -40,13 +40,13 @@ Async tasks:
 - Typechecks, tests, lint, format = synchronous.
 
 Write-it-down:
-- `/tmp` = private read-write scratchpad; each subagent gets own clean `/tmp`.
+- `$TMPDIR` = private read-write scratchpad; each subagent gets its own clean `$TMPDIR` folder/path.
 - Outside of `pwd`: read-only, no write. Same constraints for all subagents.
 - Want to remember → write it down (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Shared context notes → current working directory; reference when messaging subagents.
 - Clean up notes after use.
 
 General rules:
-- Exploration must be done via scout and researcher subagents whenever possible.
+- Exploration MUST be done via scout and researcher subagents whenever possible.
 - Always code review your subagents' work.
-- Always code review when your work add/remove +-500 lines in total
+- Always code review when your total work add/remove +-500 lines.

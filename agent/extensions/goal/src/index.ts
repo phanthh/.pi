@@ -44,7 +44,7 @@ const escapeXml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt
 export default function (pi: ExtensionAPI) {
 	let goal: GoalState | null = null;
 	let armed = true; // false after user abort until next interactive input
-	let lastTurnHadTools = false;
+	let runHadTools = false; // any tool call in the whole run; text-only run = stalled/asking
 
 	type Ctx = { ui: { setStatus(key: string, text: string | undefined): void } };
 	const budgetText = (g: GoalState) =>
@@ -74,6 +74,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		runHadTools = false;
 		if (!goal) return;
 		return {
 			systemPrompt: `${event.systemPrompt}
@@ -100,7 +101,7 @@ ${VERIFY_CHECKLIST}`,
 	});
 
 	pi.on("turn_end", async (event, ctx) => {
-		lastTurnHadTools = event.toolResults.length > 0;
+		if (event.toolResults.length > 0) runHadTools = true;
 		if (!goal) return;
 		const msg = event.message;
 		if (msg.role !== "assistant") return;
@@ -129,7 +130,7 @@ ${VERIFY_CHECKLIST}`,
 			armed = false;
 			return;
 		}
-		if (!lastTurnHadTools) return; // talk-only turn = stalled/asking → wait for user
+		if (!runHadTools) return; // talk-only run = stalled/asking → wait for user
 		if (overBudget(goal)) return; // budget hit → stop the loop, user decides next
 		goal.nudges++;
 		persist(ctx);

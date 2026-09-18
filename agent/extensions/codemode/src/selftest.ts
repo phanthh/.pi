@@ -8,7 +8,7 @@ import { Type } from "typebox";
 import { buildDeclarations } from "./declarations.ts";
 import { createDispatcher } from "./dispatch.ts";
 import { normalizePiArgs } from "./guest-setup.ts";
-import { applyOutputBudget } from "./output.ts";
+import { applyOutputBudget, DISPLAY_JSON_STRING_CHARS, formatDisplayValue, formatValue } from "./output.ts";
 import { execute, type HostCall } from "./quickjs.ts";
 import { typeCheckGuestCode } from "./type-checker.ts";
 
@@ -243,6 +243,18 @@ const tests: Array<[string, () => Promise<void> | void]> = [
 		async () => {
 			const outcome = await run(`print("hello", 1); return 0;`);
 			assert.deepEqual(outcome.result?.logs, ["hello 1"]);
+		},
+	],
+	[
+		"display JSON recursively caps string values without changing model output",
+		() => {
+			const long = "x".repeat(DISPLAY_JSON_STRING_CHARS + 20);
+			const value = { top: long, nested: [{ value: long }] };
+			const display = formatDisplayValue(value);
+			assert.equal(display.match(new RegExp(`${long.length} chars`, "g"))?.length, 2);
+			assert.ok(display.length < formatValue(value).length);
+			assert.equal(formatDisplayValue(JSON.stringify(value)), display);
+			assert.equal(JSON.parse(formatValue(value)).nested[0].value, long);
 		},
 	],
 	[

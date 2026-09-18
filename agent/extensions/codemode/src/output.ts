@@ -9,6 +9,7 @@ import path from "node:path";
 
 export const SUCCESS_BUDGET_CHARS = 50_000;
 export const FAILURE_BUDGET_CHARS = 20_000;
+export const DISPLAY_JSON_STRING_CHARS = 120;
 
 const writeArtifact = (text: string): string | undefined => {
 	try {
@@ -47,3 +48,36 @@ export const formatValue = (value: unknown): string => {
 		return String(value);
 	}
 };
+
+/** Keeps JSON-shaped tool rows readable without reducing model-visible output. */
+export const formatDisplayValue = (value: unknown): string => {
+	if (value === undefined) return "";
+	let json = value;
+	if (typeof value === "string") {
+		try {
+			json = JSON.parse(value);
+		} catch {
+			return value;
+		}
+	}
+	if (typeof json !== "object" || json === null) return formatValue(value);
+	try {
+		return (
+			JSON.stringify(
+				json,
+				(_key, item) =>
+					typeof item === "string" && item.length > DISPLAY_JSON_STRING_CHARS
+						? `${item.slice(0, DISPLAY_JSON_STRING_CHARS)}… (${item.length} chars)`
+						: item,
+				2,
+			) ?? String(value)
+		);
+	} catch {
+		return formatValue(value);
+	}
+};
+
+export const truncateDisplay = (text: string, budget: number): string =>
+	text.length <= budget
+		? text
+		: `${text.slice(0, budget)}\n… (${text.length - budget} chars omitted from display)`;

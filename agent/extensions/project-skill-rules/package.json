@@ -1,0 +1,11 @@
+{
+	"name": "@pi-ext/project-skill-rules",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "node --experimental-strip-types --test src/index.test.ts"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	}
+}
