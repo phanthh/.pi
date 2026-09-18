@@ -14,6 +14,7 @@ import {
   OM_REFLECTIONS_RECORDED,
   projectObservations,
   projectReflections,
+  reflectionCoverageMap,
   renderMemoryBlock,
   stripMemoryBlock,
   stripSourceLabels,
@@ -30,10 +31,28 @@ import { buildTranscript, type SessionEntryLike } from "./transcript.ts";
 const EXISTING_MEMORY_TOKENS = 1_200;
 type Stage = "observer" | "reflector" | "dropper";
 
+export interface OmGauge {
+  current: number;
+  limit: number;
+}
+
+export interface OmMetrics {
+  activeObservations: number;
+  totalObservations: number;
+  reflections: number;
+  tombstones: number;
+  observer: OmGauge;
+  reflector: OmGauge;
+  observationPool: OmGauge;
+  dropperPressure: OmGauge;
+  activeStage?: Stage | "starting";
+  lastError?: string;
+}
+
 export interface OmRuntime {
   getConfig: () => OmConfig;
   reload: (ctx: { cwd: string; isProjectTrusted: () => boolean }) => OmConfig;
-  status: (ctx: ExtensionContext) => string;
+  metrics: (ctx: ExtensionContext) => OmMetrics;
   recall: (query: string, ctx: ExtensionContext) => string | undefined;
   enrichSummary: (summary: string) => string;
 }
@@ -45,7 +64,11 @@ const strings = (value: unknown): string[] | null =>
 const relevance = (value: unknown): Observation["relevance"] =>
   value === "low" || value === "high" || value === "critical" ? value : "medium";
 
-const readObservationBatch = (value: unknown): ObservationBatch | null => {
+const readObservationBatch = (
+  value: unknown,
+  aliases: Map<string, string>,
+  validSourceIds: ReadonlySet<string>,
+): ObservationBatch | null => {
   const data = record(value);
   const coversUpToId = data?.coversUpToId ?? data?.throughEntryId;
   if (typeof coversUpToId !== "string" || !Array.isArray(data?.observations)) return null;
@@ -53,47 +76,59 @@ const readObservationBatch = (value: unknown): ObservationBatch | null => {
   for (const raw of data.observations) {
     const item = record(raw);
     if (!item || typeof item.content !== "string" || !item.content.trim()) continue;
-    const sourceEntryIds = strings(item.sourceEntryIds ?? item.sourceIds);
+    const sourceEntryIds = strings(item.sourceEntryIds ?? item.sourceIds)?.filter((id) => validSourceIds.has(id));
     if (!sourceEntryIds?.length) continue;
     const content = stripSourceLabels(item.content);
     if (!content) continue;
+    const id = hashId(content);
+    if (typeof item.id === "string" && /^[a-f0-9]{12}$/i.test(item.id)) aliases.set(item.id.toLowerCase(), id);
     observations.push({
-      id: typeof item.id === "string" && /^[a-f0-9]{12}$/i.test(item.id) ? item.id : hashId(content),
+      id,
       content,
       timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date(0).toISOString(),
       relevance: relevance(item.relevance),
       sourceEntryIds,
-      tokenCount: typeof item.tokenCount === "number" && item.tokenCount >= 0 ? item.tokenCount : estimateTokens(content),
+      tokenCount: estimateTokens(content),
     });
   }
   return { coversUpToId, observations };
 };
 
-const readReflectionBatch = (value: unknown): ReflectionBatch | null => {
+const readReflectionBatch = (
+  value: unknown,
+  aliases: Map<string, string>,
+  validObservationIds: ReadonlySet<string>,
+): ReflectionBatch | null => {
   const data = record(value);
   if (typeof data?.coversUpToId !== "string" || !Array.isArray(data.reflections)) return null;
   const reflections: ReflectionBatch["reflections"] = [];
   for (const raw of data.reflections) {
     const item = record(raw);
     if (!item || typeof item.content !== "string" || !item.content.trim() || /[\r\n]/.test(item.content)) continue;
-    const supportingObservationIds = strings(item.supportingObservationIds);
-    if (!supportingObservationIds?.length) continue;
+    const storedSupportingIds = strings(item.supportingObservationIds);
+    if (!storedSupportingIds?.length) continue;
+    const supportingObservationIds = storedSupportingIds
+      .map((supportId) => aliases.get(supportId.toLowerCase()) ?? supportId)
+      .filter((supportId) => validObservationIds.has(supportId));
+    if (supportingObservationIds.length === 0) continue;
     const content = item.content.trim();
+    const id = hashId(content);
+    if (typeof item.id === "string" && /^[a-f0-9]{12}$/i.test(item.id)) aliases.set(item.id.toLowerCase(), id);
     reflections.push({
-      id: typeof item.id === "string" && /^[a-f0-9]{12}$/i.test(item.id) ? item.id : hashId(content),
+      id,
       content,
       supportingObservationIds,
-      tokenCount: typeof item.tokenCount === "number" && item.tokenCount >= 0 ? item.tokenCount : estimateTokens(content),
+      tokenCount: estimateTokens(content),
     });
   }
   return { coversUpToId: data.coversUpToId, reflections };
 };
 
-const readDropBatch = (value: unknown): DropBatch | null => {
+const readDropBatch = (value: unknown, aliases: Map<string, string>): DropBatch | null => {
   const data = record(value);
   const observationIds = strings(data?.observationIds);
   return typeof data?.coversUpToId === "string" && observationIds
-    ? { coversUpToId: data.coversUpToId, observationIds }
+    ? { coversUpToId: data.coversUpToId, observationIds: observationIds.map((id) => aliases.get(id.toLowerCase()) ?? id) }
     : null;
 };
 
@@ -102,12 +137,10 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
   let observations: Observation[] = [];
   let reflections: Reflection[] = [];
   let droppedIds = new Set<string>();
+  let idAliases = new Map<string, string>();
   let observerCursor: string | undefined;
-  /** Progress cursors advance on empty success; coverage cursors only on ledger records. */
   let reflectorCursor: string | undefined;
-  let reflectorCoverageCursor: string | undefined;
   let dropperCursor: string | undefined;
-  let dropperCoverageCursor: string | undefined;
   let activeRun: { id: symbol; controller: AbortController } | undefined;
   let generation = 0;
   let lastError: string | undefined;
@@ -121,14 +154,16 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     observations = [];
     reflections = [];
     droppedIds = new Set<string>();
-    observerCursor = reflectorCursor = reflectorCoverageCursor = undefined;
-    dropperCursor = dropperCoverageCursor = undefined;
+    idAliases = new Map<string, string>();
+    observerCursor = reflectorCursor = dropperCursor = undefined;
     const observationIds = new Set<string>();
     const reflectionIds = new Set<string>();
-    for (const entry of ctx.sessionManager.getBranch()) {
+    const branch = ctx.sessionManager.getBranch() as readonly SessionEntryLike[];
+    const validSourceIds = new Set(branch.filter((entry) => entry.type === "message" || entry.type === "branch_summary").flatMap((entry) => entry.id ? [entry.id] : []));
+    for (const entry of branch) {
       if (entry.type !== "custom") continue;
       if (entry.customType === OM_OBSERVATIONS_RECORDED || entry.customType === LEGACY_OBSERVATIONS_RECORDED) {
-        const batch = readObservationBatch(entry.data);
+        const batch = readObservationBatch(entry.data, idAliases, validSourceIds);
         if (!batch) continue;
         observerCursor = batch.coversUpToId;
         for (const item of batch.observations) {
@@ -137,18 +172,22 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
           observations.push({ ...item, seq: observations.length, coversUpToId: batch.coversUpToId });
         }
       } else if (entry.customType === OM_REFLECTIONS_RECORDED) {
-        const batch = readReflectionBatch(entry.data);
+        const batch = readReflectionBatch(entry.data, idAliases, observationIds);
         if (!batch) continue;
-        reflectorCursor = reflectorCoverageCursor = batch.coversUpToId;
+        reflectorCursor = batch.coversUpToId;
         for (const item of batch.reflections) {
-          if (reflectionIds.has(item.id)) continue;
+          if (reflectionIds.has(item.id)) {
+            const existing = reflections.find((reflection) => reflection.id === item.id)!;
+            existing.supportingObservationIds = [...new Set([...existing.supportingObservationIds, ...item.supportingObservationIds])];
+            continue;
+          }
           reflectionIds.add(item.id);
           reflections.push({ ...item, seq: reflections.length });
         }
       } else if (entry.customType === OM_OBSERVATIONS_DROPPED) {
-        const batch = readDropBatch(entry.data);
+        const batch = readDropBatch(entry.data, idAliases);
         if (!batch) continue;
-        dropperCursor = dropperCoverageCursor = batch.coversUpToId;
+        dropperCursor = batch.coversUpToId;
         batch.observationIds.forEach((id) => droppedIds.add(id));
       }
     }
@@ -203,12 +242,6 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     const index = cursorIndex(transcript, cursor);
     return transcript.slice(index >= 0 ? index + 1 : 0).reduce((sum, entry) => sum + estimateTokens(entry.text), 0);
   };
-  const observationsAfter = (transcript: ReturnType<typeof buildTranscript>, cursor: string | undefined): Observation[] => {
-    const boundary = cursorIndex(transcript, cursor);
-    const indexes = new Map(transcript.map((entry, index) => [entry.id, index]));
-    return activeObservations().filter((observation) => (indexes.get(observation.coversUpToId) ?? Number.POSITIVE_INFINITY) > boundary);
-  };
-
   const appendObservationBatch = (batch: ObservationBatch) => {
     const existing = new Set(observations.map((observation) => observation.id));
     const accepted = batch.observations.filter((observation) => !existing.has(observation.id));
@@ -221,24 +254,31 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
   };
 
   const appendReflectionBatch = (batch: ReflectionBatch) => {
-    const existing = new Set(reflections.map((reflection) => reflection.id));
-    const accepted = batch.reflections.filter((reflection) => !existing.has(reflection.id));
-    accepted.forEach((reflection) => {
-      existing.add(reflection.id);
-      reflections.push({ ...reflection, seq: reflections.length });
-    });
-    reflectorCursor = reflectorCoverageCursor = batch.coversUpToId;
-    pi.appendEntry(OM_REFLECTIONS_RECORDED, { ...batch, reflections: accepted });
+    const recorded: ReflectionBatch["reflections"] = [];
+    for (const reflection of batch.reflections) {
+      const existing = reflections.find((item) => item.id === reflection.id);
+      if (!existing) {
+        reflections.push({ ...reflection, seq: reflections.length });
+        recorded.push(reflection);
+        continue;
+      }
+      const newSupportingIds = reflection.supportingObservationIds.filter((id) => !existing.supportingObservationIds.includes(id));
+      if (newSupportingIds.length === 0) continue;
+      existing.supportingObservationIds.push(...newSupportingIds);
+      recorded.push({ ...reflection, supportingObservationIds: newSupportingIds });
+    }
+    reflectorCursor = batch.coversUpToId;
+    pi.appendEntry(OM_REFLECTIONS_RECORDED, { ...batch, reflections: recorded });
   };
 
   const appendDropBatch = (batch: DropBatch) => {
     batch.observationIds.forEach((id) => droppedIds.add(id));
-    dropperCursor = dropperCoverageCursor = batch.coversUpToId;
+    dropperCursor = batch.coversUpToId;
     pi.appendEntry(OM_OBSERVATIONS_DROPPED, batch);
   };
 
   const consolidate = async (ctx: ExtensionContext) => {
-    if (!config.enabled || activeRun || Date.now() < retryAfter) return;
+    if (activeRun || Date.now() < retryAfter) return;
     const run = { id: Symbol("om-consolidation"), controller: new AbortController() };
     activeRun = run;
     const startedGeneration = generation;
@@ -260,34 +300,35 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
 
       transcript = buildTranscript(ctx.sessionManager.getBranch() as readonly SessionEntryLike[]);
       const latestObserverCoverage = observerCursor;
-      const newForReflection = observationsAfter(transcript, reflectorCoverageCursor);
-      if (latestObserverCoverage && newForReflection.length > 0 && tokensAfter(transcript, reflectorCursor) >= config.reflectAfterTokens) {
+      const active = activeObservations();
+      const reflectionCoverage = reflectionCoverageMap(active, reflections);
+      const reflectionCandidates = active.filter((observation) => reflectionCoverage.get(observation.id) === "none");
+      if (latestObserverCoverage && reflectionCandidates.length > 0 && tokensAfter(transcript, reflectorCursor) >= config.reflectAfterTokens) {
         lastStage = "reflector";
         const produced = await runWithFallback("reflector", ctx, (model) => runReflector(ctx.modelRegistry, model, config, {
-          observations: newForReflection,
-          activeObservations: activeObservations(),
+          observations: reflectionCandidates,
+          activeObservations: active,
           reflections,
         }, run.controller.signal));
         if (!current()) return;
-        if (produced.length > 0) appendReflectionBatch({ coversUpToId: latestObserverCoverage, reflections: produced });
-        else reflectorCursor = latestObserverCoverage;
+        appendReflectionBatch({ coversUpToId: latestObserverCoverage, reflections: produced });
       }
 
-      const poolTokens = activeObservations().reduce((sum, observation) => sum + observation.tokenCount, 0);
+      const dropCandidates = activeObservations();
+      const poolTokens = dropCandidates.reduce((sum, observation) => sum + observation.tokenCount, 0);
       const fullness = poolTokens / config.observationsPoolMaxTokens;
       const pressure = poolTokens >= config.dropperPressureThreshold * config.reflectorInputMaxTokens;
-      const candidates = observationsAfter(transcript, dropperCoverageCursor);
       const dropProgressDue = tokensAfter(transcript, dropperCursor) >= config.reflectAfterTokens;
-      if (observerCursor && candidates.length > 0 && fullness >= config.dropperPoolFullnessThreshold && (dropProgressDue || pressure)) {
+      const pressureDue = pressure && dropperCursor !== observerCursor;
+      if (observerCursor && dropCandidates.length > 0 && fullness >= config.dropperPoolFullnessThreshold && (dropProgressDue || pressureDue)) {
         lastStage = "dropper";
         const ids = await runWithFallback("dropper", ctx, (model) => runDropper(ctx.modelRegistry, model, config, {
-          candidates,
-          activeObservations: activeObservations(),
+          candidates: dropCandidates,
+          activeObservations: dropCandidates,
           reflections,
         }, run.controller.signal));
         if (!current()) return;
-        if (ids.length > 0) appendDropBatch({ coversUpToId: observerCursor, observationIds: ids });
-        else dropperCursor = observerCursor;
+        appendDropBatch({ coversUpToId: observerCursor, observationIds: ids });
       }
       lastError = undefined;
       retryAfter = 0;
@@ -309,6 +350,13 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
     restore(ctx);
   });
+  pi.on("session_tree", (_event, ctx) => {
+    generation++;
+    cancel();
+    lastError = lastStage = undefined;
+    retryAfter = 0;
+    restore(ctx);
+  });
   pi.on("session_shutdown", () => { generation++; cancel(); });
   pi.on("agent_start", (_event, ctx) => { void consolidate(ctx); });
   pi.on("turn_end", (_event, ctx) => { void consolidate(ctx); });
@@ -316,28 +364,41 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
   return {
     getConfig: () => config,
     reload: (ctx) => {
+      generation++;
+      cancel();
+      lastError = lastStage = undefined;
       config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
       retryAfter = 0;
-      if (!config.enabled) { generation++; cancel(); }
       return config;
     },
-    status: (ctx) => {
+    metrics: (ctx) => {
       const transcript = buildTranscript(ctx.sessionManager.getBranch() as readonly SessionEntryLike[]);
       const active = activeObservations();
       const poolTokens = active.reduce((sum, observation) => sum + observation.tokenCount, 0);
-      return [
-        `pipeline: ${config.enabled ? "on" : "off"}${activeRun ? ` (${lastStage ?? "starting"} running)` : ""}`,
-        `ledger: ${active.length}/${observations.length} active observations, ${reflections.length} reflections, ${droppedIds.size} tombstones`,
-        `observer pending: ~${tokensAfter(transcript, observerCursor)} / ${config.observeAfterTokens} tokens`,
-        `reflector pending: ~${tokensAfter(transcript, reflectorCursor)} / ${config.reflectAfterTokens} tokens`,
-        `dropper pool: ~${poolTokens} / ${config.observationsPoolMaxTokens} tokens`,
-        lastError ? `last error: ${lastError}` : "last error: none",
-      ].join("\n");
+      return {
+        activeObservations: active.length,
+        totalObservations: observations.length,
+        reflections: reflections.length,
+        tombstones: droppedIds.size,
+        observer: { current: tokensAfter(transcript, observerCursor), limit: config.observeAfterTokens },
+        reflector: { current: tokensAfter(transcript, reflectorCursor), limit: config.reflectAfterTokens },
+        observationPool: {
+          current: poolTokens,
+          limit: config.observationsPoolMaxTokens,
+        },
+        dropperPressure: {
+          current: poolTokens,
+          limit: Math.round(config.dropperPressureThreshold * config.reflectorInputMaxTokens),
+        },
+        activeStage: activeRun ? lastStage ?? "starting" : undefined,
+        lastError,
+      };
     },
     recall: (query, ctx) => {
       const match = /^\[?([a-f0-9]{12})\]?$/i.exec(query);
       if (!match) return undefined;
-      const id = match[1].toLowerCase();
+      const requestedId = match[1].toLowerCase();
+      const id = idAliases.get(requestedId) ?? requestedId;
       const reflection = reflections.find((item) => item.id === id);
       const directObservation = observations.find((item) => item.id === id);
       if (!reflection && !directObservation) return undefined;
@@ -348,6 +409,10 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       const rendered: string[] = [];
       let messageIndex = 0;
       for (const entry of ctx.sessionManager.getBranch()) {
+        if (entry.type === "branch_summary") {
+          if (sourceIds.has(entry.id)) rendered.push(`[branch_summary]\n${entry.summary.slice(0, 4_000)}`);
+          continue;
+        }
         if (entry.type !== "message" || !entry.message) continue;
         if (sourceIds.has(entry.id)) {
           const message = entry.message as Message;

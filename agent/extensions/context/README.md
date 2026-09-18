@@ -21,12 +21,12 @@ session_before_compact
 Ported OM behavior follows `pi-blackhole`:
 
 - **Observer:** oldest-first contiguous transcript chunks; strict cited-source validation; deterministic content IDs; timestamp from latest cited source; exact dedupe.
-- **Reflector:** distills scarce durable facts from new observations. Every support ID must be valid or proposal is rejected. Support becomes Dropper coverage evidence.
-- **Dropper:** defaults to keep. LLM proposes candidate IDs; deterministic fullness gate, hard drop limit, then coverage → relevance → age ranking chooses removals.
-- **Ledger:** append-only custom entries. Drops are tombstones; original observations and transcript remain recallable.
+- **Reflector:** distills scarce durable facts from uncovered observations. Every support ID must be valid or proposal is rejected. Uncovered observations remain eligible on later passes; support becomes Dropper coverage evidence.
+- **Dropper:** defaults to keep. Every active observation remains eligible on later passes. LLM proposes candidate IDs; deterministic fullness gate, hard drop limit, then coverage → relevance → age ranking chooses removals.
+- **Ledger:** append-only custom entries, including empty successful stage progress. Drops are tombstones; original observations and transcript remain recallable.
 - **Projection:** active observations ranked by relevance and recency; newest reflections retained first. Independent hard token budgets. Previous injected block is stripped before replacement.
-- **Isolation:** workers use separate provider completions with fixed system prompts. Main session prompt/tools remain unchanged; memory enters only during compaction.
-- **Lifecycle:** one pipeline runs at a time. Session switch/shutdown aborts work and stale results are discarded. Stage model failures fall through configured candidates; a failed stage stops later stages for that run.
+- **Isolation:** workers use separate provider completions with fixed system prompts and hard estimated input budgets. Main session prompt/tools remain unchanged; memory enters only during compaction.
+- **Lifecycle:** one pipeline runs at a time. Session switch, tree navigation, config reload, and shutdown abort work; selected-branch ledger state is restored and stale results are discarded. Stage model failures fall through configured candidates; a failed stage stops later stages for that run.
 
 Unlike pi-blackhole's multi-turn tool loops, each stage uses one strict-JSON completion. This preserves stage semantics and validation while bounding requests and output.
 
@@ -36,7 +36,6 @@ Global `~/.pi/agent/om.json`, shallow-merged with trusted project `.pi/om.json`:
 
 ```json
 {
-  "enabled": true,
   "model": null,
   "observerModel": null,
   "reflectorModel": null,
@@ -64,14 +63,13 @@ Model resolution per stage:
 stage model → stage fallback models → shared model → session model (when enabled)
 ```
 
-Use cheap dedicated models and set `sessionFallback: false` for predictable cost. Unknown/invalid fields are ignored; numeric values are clamped. Legacy `memoryMaxTokens` remains accepted as an alias for `observationsPoolMaxTokens`.
+OM is always on while the `context` extension is loaded. Use cheap dedicated models and set `sessionFallback: false` for predictable cost. Unknown/invalid fields are ignored; numeric values are clamped. Legacy `memoryMaxTokens` remains accepted as an alias for `observationsPoolMaxTokens`; legacy `enabled` is ignored.
 
 ## `/context`
 
-- `/context` or `/context usage` — interactive context-window usage map.
+- `/context` or `/context usage` — interactive context-window usage map plus Observer, Reflector, observation-pool, and Reflector-load gauges; ledger totals and active errors appear in the same dashboard.
 - `/context injections` — inspect initial system prompt, tools, context files, skills, and extension additions.
-- `/context status` — OM pipeline, ledger, stage progress, pool pressure, and last error.
-- `/context settings` — common OM toggles/thresholds; writes global `om.json`.
+- `/context settings` — common OM thresholds and budgets; writes global `om.json`.
 - `/context reload` — reload global + trusted project OM config.
 - `/context config` — create context-view color overrides at `~/.pi/agent/extensions/pi-context-view.json`.
 

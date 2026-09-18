@@ -68,12 +68,13 @@ export const runObserver = async (
       });
       const timestamps = observation.sourceIds.flatMap((label) => {
         const timestamp = timestampByLabel.get(label);
-        return timestamp ? [timestamp] : [];
-      }).sort();
+        const time = timestamp === undefined ? Number.NaN : Date.parse(timestamp);
+        return Number.isFinite(time) ? [{ timestamp, time }] : [];
+      }).sort((a, b) => a.time - b.time);
       return {
         id: hashId(observation.content),
         content: observation.content,
-        timestamp: timestamps.at(-1) ?? new Date().toISOString(),
+        timestamp: timestamps.at(-1)?.timestamp ?? new Date().toISOString(),
         relevance: observation.relevance,
         sourceEntryIds,
         tokenCount: estimateTokens(observation.content),

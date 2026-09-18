@@ -16,23 +16,29 @@ export interface NewTopicDependencies {
 
 export const registerNewTopic = (pi: ExtensionAPI, dependencies: NewTopicDependencies) => {
   let pending = false;
+  let compacting = false;
+  let generation = 0;
 
   const compact = (ctx: ExtensionContext) => {
+    compacting = true;
+    const runGeneration = ++generation;
     try {
       ctx.compact({
         customInstructions: `${dependencies.compactMarker} keep:1`,
         onComplete: () => {
-          pending = false;
+          if (runGeneration !== generation) return;
+          pending = compacting = false;
           ctx.ui.notify("context: new topic — prior context compacted", "info");
           dependencies.triggerInvisibleContinue(pi);
         },
         onError: (error) => {
-          pending = false;
+          if (runGeneration !== generation) return;
+          pending = compacting = false;
           ctx.ui.notify(`context: new topic failed: ${error.message}`, "error");
         },
       });
     } catch (error) {
-      pending = false;
+      pending = compacting = false;
       ctx.ui.notify(
         `context: new topic failed: ${error instanceof Error ? error.message : String(error)}`,
         "error",
@@ -41,13 +47,13 @@ export const registerNewTopic = (pi: ExtensionAPI, dependencies: NewTopicDepende
   };
 
   pi.on("agent_end", (_event, ctx) => {
-    if (!pending) return;
-    pending = false;
+    if (!pending || compacting) return;
     compact(ctx);
   });
 
   pi.on("session_shutdown", () => {
-    pending = false;
+    generation++;
+    pending = compacting = false;
   });
 
   pi.registerTool({

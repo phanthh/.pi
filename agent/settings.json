@@ -30,6 +30,9 @@
   "compaction": {
     "enabled": true
   },
-  "hideThinkingBlock": true,
+  "branchSummary": {
+    "skipPrompt": true
+  },
+  "hideThinkingBlock": false,
   "showCacheMissNotices": true
 }

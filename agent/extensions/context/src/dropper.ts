@@ -2,10 +2,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { OmConfig } from "./config.ts";
-import { estimateTokens, reflectionCoverageMap, type Observation, type Reflection } from "./memory.ts";
+import { reflectionCoverageMap, type Observation, type Reflection } from "./memory.ts";
 import { assistantText } from "./observer.ts";
 import { parseDropIds } from "./parse.ts";
 import { DROPPER_SYSTEM } from "./dropper-prompt.ts";
+import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
 
 const DROP_LOW_URGENCY_FULLNESS = 0.3;
 const DROP_MEDIUM_URGENCY_FULLNESS = 0.6;
@@ -64,18 +65,6 @@ export const selectDropCandidates = (
 const reflectionLine = (reflection: Reflection): string => `[${reflection.id}] ${reflection.content}`;
 const observationLine = (observation: Observation, coverage: Coverage): string =>
   `[${observation.id}] ${observation.timestamp} [${observation.relevance}] [coverage: ${coverage}] ${observation.content}`;
-const boundedLines = (lines: string[], budget: number): string => {
-  const selected: string[] = [];
-  let used = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const cost = estimateTokens(lines[i]);
-    if (used + cost > budget) continue;
-    used += cost;
-    selected.push(lines[i]);
-  }
-  return selected.reverse().join("\n");
-};
-
 export const runDropper = async (
   registry: Pick<ModelRegistry, "complete">,
   model: Model<Api>,
@@ -95,16 +84,32 @@ export const runDropper = async (
   if (maxDrops === 0) return [];
 
   const coverage = reflectionCoverageMap(request.activeObservations, request.reflections);
-  const candidateIds = new Set(request.candidates.map((observation) => observation.id));
-  const contextBudget = Math.floor(config.dropperInputMaxTokens * 0.2);
-  const existing = request.activeObservations.filter((observation) => !candidateIds.has(observation.id));
   const urgency = fullness < DROP_LOW_URGENCY_FULLNESS ? "low" : fullness < DROP_MEDIUM_URGENCY_FULLNESS ? "medium" : "high";
+  const status = `Pool: ~${poolTokens} tokens / ~${config.observationsPoolMaxTokens}; fullness: ~${Math.round(fullness * 100)}%; urgency: ${urgency}; maximum drops: ${maxDrops}. Maximum is a hard bound, not a target.`;
+  const replyInstruction = `Reply with JSON only: {"ids":["observation-id"]}. Use only candidate ids. An empty ids array is valid and preferred when no drop is clearly safe.`;
+  const fixedText = `${DROPPER_SYSTEM}\nCURRENT REFLECTIONS:\nEXISTING ACTIVE OBSERVATIONS (context only; not candidates):\nNEW OBSERVATIONS TO EVALUATE FOR DROPPING:\n${status}\n${replyInstruction}\n(none yet)`;
+  const budgets = sectionBudgets(config.dropperInputMaxTokens, fixedText);
+  const candidates = selectWithinBudget(
+    request.candidates,
+    budgets.candidates,
+    (observation) => observationLine(observation, coverage.get(observation.id) ?? "none"),
+  );
+  if (candidates.length === 0) return [];
+  const candidateIds = new Set(candidates.map((observation) => observation.id));
+  const existingObservations = request.activeObservations.filter((observation) => !candidateIds.has(observation.id));
+  const currentReflections = selectWithinBudget(request.reflections, budgets.existing, reflectionLine, true);
+  const existing = selectWithinBudget(
+    existingObservations,
+    budgets.existing,
+    (observation) => observationLine(observation, coverage.get(observation.id) ?? "none"),
+    true,
+  );
   const prompt = [
-    `CURRENT REFLECTIONS:\n${boundedLines(request.reflections.map(reflectionLine), contextBudget) || "(none yet)"}`,
-    `EXISTING ACTIVE OBSERVATIONS (context only; not candidates):\n${boundedLines(existing.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")), contextBudget) || "(none yet)"}`,
-    `NEW OBSERVATIONS TO EVALUATE FOR DROPPING:\n${request.candidates.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n")}`,
-    `Pool: ~${poolTokens} tokens / ~${config.observationsPoolMaxTokens}; fullness: ~${Math.round(fullness * 100)}%; urgency: ${urgency}; maximum drops: ${maxDrops}. Maximum is a hard bound, not a target.`,
-    `Reply with JSON only: {"ids":["observation-id"]}. Use only candidate ids. An empty ids array is valid and preferred when no drop is clearly safe.`,
+    `CURRENT REFLECTIONS:\n${currentReflections.map(reflectionLine).join("\n") || "(none yet)"}`,
+    `EXISTING ACTIVE OBSERVATIONS (context only; not candidates):\n${existing.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n") || "(none yet)"}`,
+    `NEW OBSERVATIONS TO EVALUATE FOR DROPPING:\n${candidates.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n")}`,
+    status,
+    replyInstruction,
   ].join("\n\n");
   const response = await registry.complete(model, {
     systemPrompt: `${DROPPER_SYSTEM}\n\nThis interface has no tools; return the requested JSON object instead.`,

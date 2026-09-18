@@ -49,6 +49,7 @@ import {
 } from "./usage-map.ts";
 import { BlockNavigator, layoutPreviewBlocks, type PreviewLayout } from "./usage-preview.ts";
 import { DEFAULT_WHEEL_SCROLL_LINES, parseWheelDirection, readWheelScrollLines } from "./wheel.ts";
+import type { OmGauge, OmMetrics } from "../../om.ts";
 
 const USAGE_DESCRIPTION = "Estimated context for the next model request. " +
 	"Token counts are approximate and may differ from the provider's estimate.";
@@ -57,7 +58,7 @@ const INVISIBLE_REASONING_DESCRIPTION =
 	"≈ is a provider-reported count; ~ is a rough approximation when no breakdown " +
 	"is reported and excluded from category totals. " +
 	"Encoded replaces Reasoning when the provider replays encrypted reasoning with its message.";
-/** Dashboard rows below the content, excluding the collapsible description: blank, hints, blank, border. */
+/** Dashboard rows below map/legend, excluding description and OM gauges: blank, hints, blank, border. */
 const USAGE_TAIL_FIXED_LINE_COUNT = 4;
 const DETAIL_CATEGORY_HEADER_LINE_COUNT = 1;
 const PREVIEW_FIXED_LINE_COUNT = 8;
@@ -78,6 +79,10 @@ const MAP_SIDE_BY_SIDE_MIN_WIDTH = 52;
 const SPACED_MAP_MIN_WIDTH = 72;
 const MAP_COLUMN_GAP = 2;
 const SPACED_MAP_COLUMN_GAP = 3;
+const OM_SIDE_BY_SIDE_MIN_WIDTH = 76;
+const OM_GAUGE_GAP = 3;
+const OM_LABEL_WIDTH = 10;
+const OM_MIN_BAR_WIDTH = 4;
 const FULL_CELL = "■";
 const PARTIAL_CELL = "◧";
 const COMPACTED_CELL = "▦";
@@ -95,6 +100,7 @@ const MAP_KEY_COMPACT_SPARE_ROWS = 2;
 /** Everything the Usage view renders, classified once when the view opens. */
 export interface UsageViewInput {
 	readonly usage: ContextUsageSnapshot;
+	readonly memory: OmMetrics;
 	readonly degradedReason?: string;
 	/** Non-fatal problems shown under the header, such as ignored configuration entries. */
 	readonly notices?: readonly string[];
@@ -307,15 +313,22 @@ export class UsageView {
 	private renderDashboard(width: number, terminalRows: number): string[] {
 		const theme = this.theme;
 		const border = theme.fg("border", "─".repeat(Math.max(1, width)));
-		const prefix = [border, "", ...this.headerLines(width), "", ...this.noticeLines(width)];
+		const notices = this.noticeLines(width);
+		const prefix = [border, "", ...this.headerLines(width), "", ...notices];
+		const memory = this.memoryLines(width);
 		const map = this.dashboardMap();
-		const availableRows = Math.max(1, terminalRows - prefix.length - USAGE_TAIL_FIXED_LINE_COUNT);
+		const availableRows = Math.max(
+			1,
+			terminalRows - prefix.length - USAGE_TAIL_FIXED_LINE_COUNT - memory.length - 1,
+		);
 		const descriptionLines = this.dashboardDescriptionLines(width, availableRows, map);
 		const dashboardRows = Math.max(1, availableRows - descriptionBlockRows(descriptionLines));
 		const dashboard = this.dashboardLines(width, dashboardRows, map).slice(0, dashboardRows);
 		while (dashboard.length < dashboardRows) dashboard.push("");
 		const tail = [
 			...(descriptionLines.length === 0 ? [] : ["", ...descriptionLines]),
+			"",
+			...memory,
 			"",
 			this.fit(
 				hintRow(theme, this.dashboardHints(width)),
@@ -369,6 +382,59 @@ export class UsageView {
 			return [spreadLine(title, summary, width)];
 		}
 		return [this.fit(title, width), "", this.fit(summary, width)];
+	}
+
+	/** Responsive observational-memory summary and progress gauges. */
+	private memoryLines(width: number): string[] {
+		const memory = this.input.memory;
+		const heading = this.theme.fg("mdHeading", this.theme.bold("Observational Memory"));
+		const running = memory.activeStage === undefined ? "" : ` · ${memory.activeStage} running`;
+		const summary = this.theme.fg(
+			"muted",
+			`${memory.activeObservations}/${memory.totalObservations} active observations · ` +
+				`${memory.reflections} reflections · ${memory.tombstones} dropped${running}`,
+		);
+		const lines = visibleWidth(heading) + 1 + visibleWidth(summary) <= width
+			? [spreadLine(heading, summary, width)]
+			: [this.fit(heading, width), this.fit(`${BODY_INDENT}${summary}`, width)];
+		const gauges: Array<readonly [string, OmGauge, ThemeColor]> = [
+			["Observer", memory.observer, "accent"],
+			["Reflector", memory.reflector, "syntaxType"],
+			["Obs Pool", memory.observationPool, "mdLink"],
+			["Refl Load", memory.dropperPressure, "warning"],
+		];
+		if (width >= OM_SIDE_BY_SIDE_MIN_WIDTH) {
+			const cellWidth = Math.floor((width - BODY_INDENT.length - OM_GAUGE_GAP) / 2);
+			for (let index = 0; index < gauges.length; index += 2) {
+				const left = this.memoryGauge(...gauges[index], cellWidth);
+				const right = this.memoryGauge(...gauges[index + 1], cellWidth);
+				lines.push(this.fit(`${BODY_INDENT}${left}${" ".repeat(OM_GAUGE_GAP)}${right}`, width));
+			}
+		} else {
+			const gaugeWidth = Math.max(1, width - BODY_INDENT.length);
+			for (const gauge of gauges) lines.push(this.fit(`${BODY_INDENT}${this.memoryGauge(...gauge, gaugeWidth)}`, width));
+		}
+		if (memory.lastError) {
+			lines.push(this.fit(`${BODY_INDENT}${this.theme.fg("error", `Last error: ${normalizeInlineText(memory.lastError)}`)}`, width));
+		}
+		return lines;
+	}
+
+	/** One bounded gauge with independently colored used/free segments. */
+	private memoryGauge(label: string, gauge: OmGauge, color: ThemeColor, width: number): string {
+		const ratio = gauge.limit > 0 ? Math.max(0, gauge.current / gauge.limit) : 0;
+		const value = `${formatTokens(gauge.current)}/${formatTokens(gauge.limit)}`;
+		const percent = formatPercent(ratio);
+		const fixedWidth = OM_LABEL_WIDTH + value.length + percent.length + 3;
+		const barWidth = Math.max(OM_MIN_BAR_WIDTH, width - fixedWidth);
+		const filledWidth = gaugeFillWidth(gauge.current, gauge.limit, barWidth);
+		const bar = `${this.theme.fg(color, "━".repeat(filledWidth))}` +
+			`${this.theme.fg("borderMuted", "─".repeat(barWidth - filledWidth))}`;
+		const paddedLabel = label.padEnd(OM_LABEL_WIDTH);
+		return this.fit(
+			`${this.theme.fg("muted", paddedLabel)} ${bar} ${this.theme.fg("text", value)} ${this.theme.fg("dim", percent)}`,
+			width,
+		);
 	}
 
 	/** Toggle the view-local map denominator when the binding is currently visible. */
@@ -1222,6 +1288,13 @@ function categoryMarker(categoryId: string, depth: number): string {
 /** Token estimate carried by category, buffer, or free-space legend rows. */
 function legendTokens(row: LegendRow): number {
 	return row.type === "category" ? row.category.tokens : row.tokens;
+}
+
+/** Clamp gauge fill while leaving displayed percentage free to show overflow. */
+export function gaugeFillWidth(current: number, limit: number, width: number): number {
+	if (limit <= 0 || width <= 0) return 0;
+	const ratio = Math.max(0, Math.min(1, current / limit));
+	return Math.round(ratio * width);
 }
 
 /** Compact token count: 951, 3.7k, 43.8k, 1M. */

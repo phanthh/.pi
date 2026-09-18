@@ -5,6 +5,7 @@ import type { OmConfig } from "./config.ts";
 import { estimateTokens, hashId, reflectionCoverageMap, type Observation, type Reflection } from "./memory.ts";
 import { assistantText } from "./observer.ts";
 import { parseReflections } from "./parse.ts";
+import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
 import { REFLECTOR_SYSTEM } from "./reflector-prompt.ts";
 
 const REFLECTOR_JSON_INSTRUCTION = `This interface has no tools. Reply with JSON only:
@@ -15,18 +16,6 @@ const observationLine = (observation: Observation, coverage: string): string =>
   `[${observation.id}] ${observation.timestamp} [${observation.relevance}] [coverage: ${coverage}] ${observation.content}`;
 const reflectionLine = (reflection: Reflection): string => `[${reflection.id}] ${reflection.content}`;
 
-const boundedLines = (lines: string[], budget: number): string => {
-  const selected: string[] = [];
-  let used = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const cost = estimateTokens(lines[i]);
-    if (used + cost > budget) continue;
-    used += cost;
-    selected.push(lines[i]);
-  }
-  return selected.reverse().join("\n");
-};
-
 export const runReflector = async (
   registry: Pick<ModelRegistry, "complete">,
   model: Model<Api>,
@@ -36,13 +25,27 @@ export const runReflector = async (
 ): Promise<Array<Omit<Reflection, "seq">>> => {
   if (request.observations.length === 0) return [];
   const coverage = reflectionCoverageMap(request.activeObservations, request.reflections);
-  const contextBudget = Math.floor(config.reflectorInputMaxTokens * 0.15);
-  const newIds = new Set(request.observations.map((observation) => observation.id));
+  const fixedText = `${REFLECTOR_SYSTEM}\n${REFLECTOR_JSON_INSTRUCTION}\nEXISTING REFLECTIONS (context only):\nEXISTING OBSERVATIONS (context only):\nNEW OBSERVATIONS TO PROCESS:\n(none yet)`;
+  const budgets = sectionBudgets(config.reflectorInputMaxTokens, fixedText);
+  const candidates = selectWithinBudget(
+    request.observations,
+    budgets.candidates,
+    (observation) => observationLine(observation, coverage.get(observation.id) ?? "none"),
+  );
+  if (candidates.length === 0) return [];
+  const newIds = new Set(candidates.map((observation) => observation.id));
   const existingObservations = request.activeObservations.filter((observation) => !newIds.has(observation.id));
+  const existingReflections = selectWithinBudget(request.reflections, budgets.existing, reflectionLine, true);
+  const existing = selectWithinBudget(
+    existingObservations,
+    budgets.existing,
+    (observation) => observationLine(observation, coverage.get(observation.id) ?? "none"),
+    true,
+  );
   const prompt = [
-    `EXISTING REFLECTIONS (context only):\n${boundedLines(request.reflections.map(reflectionLine), contextBudget) || "(none yet)"}`,
-    `EXISTING OBSERVATIONS (context only):\n${boundedLines(existingObservations.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")), contextBudget) || "(none yet)"}`,
-    `NEW OBSERVATIONS TO PROCESS:\n${request.observations.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n")}`,
+    `EXISTING REFLECTIONS (context only):\n${existingReflections.map(reflectionLine).join("\n") || "(none yet)"}`,
+    `EXISTING OBSERVATIONS (context only):\n${existing.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n") || "(none yet)"}`,
+    `NEW OBSERVATIONS TO PROCESS:\n${candidates.map((observation) => observationLine(observation, coverage.get(observation.id) ?? "none")).join("\n")}`,
   ].join("\n\n");
   const response = await registry.complete(model, {
     systemPrompt: `${REFLECTOR_SYSTEM}\n\n${REFLECTOR_JSON_INSTRUCTION}`,
@@ -51,11 +54,11 @@ export const runReflector = async (
   if (response.errorMessage) throw new Error(response.errorMessage);
 
   const parsed = parseReflections(assistantText(response.content), newIds);
-  const existingIds = new Set(request.reflections.map((reflection) => reflection.id));
+  const emittedIds = new Set<string>();
   return parsed.reflections.flatMap((reflection) => {
     const id = hashId(reflection.content);
-    if (existingIds.has(id)) return [];
-    existingIds.add(id);
+    if (emittedIds.has(id)) return [];
+    emittedIds.add(id);
     return [{
       id,
       content: reflection.content,

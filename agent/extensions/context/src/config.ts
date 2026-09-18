@@ -6,7 +6,6 @@ import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 export interface OmModelRef { provider: string; id: string }
 
 export interface OmConfig {
-  enabled: boolean;
   /** Shared worker model; stage-specific models win. */
   model: OmModelRef | null;
   observerModel: OmModelRef | null;
@@ -29,7 +28,6 @@ export interface OmConfig {
 }
 
 export const DEFAULT_CONFIG: OmConfig = {
-  enabled: true,
   model: null,
   observerModel: null,
   reflectorModel: null,
@@ -59,8 +57,8 @@ const INTEGER_LIMITS: Partial<Record<keyof OmConfig, readonly [number, number]>>
   chunkMaxTokens: [2_000, 200_000],
   observationsPoolMaxTokens: [200, 100_000],
   reflectionsPoolMaxTokens: [200, 50_000],
-  reflectorInputMaxTokens: [2_000, 200_000],
-  dropperInputMaxTokens: [2_000, 200_000],
+  reflectorInputMaxTokens: [4_000, 200_000],
+  dropperInputMaxTokens: [4_000, 200_000],
   maxOutputTokens: [200, 32_000],
 };
 const FRACTION_KEYS = ["dropperPressureThreshold", "dropperPoolFullnessThreshold"] as const;
@@ -92,7 +90,6 @@ const readModels = (value: unknown): OmModelRef[] | undefined => {
 /** Apply known valid fields; unknown/invalid fields are ignored. */
 export const applyConfig = (base: OmConfig, raw: Record<string, unknown>): OmConfig => {
   const next: OmConfig = { ...base };
-  if (typeof raw.enabled === "boolean") next.enabled = raw.enabled;
   if (typeof raw.sessionFallback === "boolean") next.sessionFallback = raw.sessionFallback;
   for (const key of MODEL_KEYS) {
     const model = readModel(raw[key]);

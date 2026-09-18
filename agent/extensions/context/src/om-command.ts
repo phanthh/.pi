@@ -17,7 +17,6 @@ const NUMERIC_PRESETS: Partial<Record<keyof OmConfig, number[]>> = {
 const onOff = (value: boolean): string => (value ? "on" : "off");
 
 const buildItems = (config: OmConfig): SettingItem[] => [
-  { id: "enabled", label: "OM pipeline enabled", currentValue: onOff(config.enabled), values: ["on", "off"] },
   {
     id: "sessionFallback",
     label: "Use session model when none configured",
@@ -51,7 +50,7 @@ const buildItems = (config: OmConfig): SettingItem[] => [
 ];
 
 const applySetting = (id: string, value: string): Partial<OmConfig> | null => {
-  if (id === "enabled" || id === "sessionFallback") return { [id]: value === "on" };
+  if (id === "sessionFallback") return { sessionFallback: value === "on" };
   if (id === "observeAfterTokens" || id === "reflectAfterTokens" || id === "observationsPoolMaxTokens" || id === "reflectionsPoolMaxTokens") {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? { [id]: parsed } : null;
@@ -60,13 +59,13 @@ const applySetting = (id: string, value: string): Partial<OmConfig> | null => {
 };
 
 export const handleOmCommand = async (
-  action: "status" | "settings" | "reload",
+  action: "settings" | "reload",
   ctx: ExtensionCommandContext,
   om: OmRuntime,
 ): Promise<void> => {
   if (action === "reload") {
-    const config = om.reload(ctx);
-    ctx.ui.notify(`context: config reloaded (OM pipeline ${onOff(config.enabled)})`, "info");
+    om.reload(ctx);
+    ctx.ui.notify("context: observational-memory config reloaded", "info");
     return;
   }
 
@@ -101,6 +100,4 @@ export const handleOmCommand = async (
     ctx.ui.notify(`context: saved to ${globalConfigPath()}`, "info");
     return;
   }
-
-  ctx.ui.notify(`context\n${om.status(ctx)}\nconfig: ${globalConfigPath()}`, "info");
 };

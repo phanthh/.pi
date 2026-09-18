@@ -185,6 +185,7 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 					modelLabel: ctx.model?.id,
 					autoCompactReserveTokens: readAutoCompactReserveTokens(ctx),
 				}),
+				memory: om.metrics(ctx),
 				degradedReason: initial.degradedReason,
 				// Reported inside the view: a notification would stay hidden behind the fullscreen overlay.
 				notices: loadedConfig.warnings,

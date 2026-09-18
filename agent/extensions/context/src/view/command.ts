@@ -15,20 +15,19 @@ import type { ConfigCreationResult } from "./config.ts";
 import type { InitialSnapshot } from "./model.ts";
 import { normalizePreviewText } from "./text.ts";
 
-const COMMAND_USAGE = "Usage: /context [usage|injections|status|settings|reload|config]";
+const COMMAND_USAGE = "Usage: /context [usage|injections|settings|reload|config]";
 /**
  * Slash-command palette text, kept beside the grammar it describes.
  * RegisteredCommand has no argumentHint; mimic pi's `<hint> — <description>` style.
  */
 export const CONTEXT_COMMAND_DESCRIPTION =
-	"[usage|injections|status|settings|reload|config] - Inspect and manage context";
+	"[usage|injections|settings|reload|config] - Inspect and manage context";
 /** Cap for reported messages, which may quote configuration files and OS error text. */
 const MAX_REPORTED_MESSAGE_LENGTH = 500;
 const DEFAULT_VIEW: ContextView = "usage";
 const ARGUMENT_OPTIONS = [
 	{ value: "usage", label: "usage", description: "Show estimated context usage" },
 	{ value: "injections", label: "injections", description: "Explore initial context injections" },
-	{ value: "status", label: "status", description: "Show observational-memory pipeline status" },
 	{ value: "settings", label: "settings", description: "Configure observational memory" },
 	{ value: "reload", label: "reload", description: "Reload observational-memory configuration" },
 	{ value: "config", label: "config", description: "Create context-view color config" },
@@ -40,7 +39,7 @@ export type ContextView = "usage" | "injections";
 /** Parsed `/context` argument grammar. */
 export type ContextCommand =
 	| { readonly type: "view"; readonly view: ContextView }
-	| { readonly type: "om"; readonly action: "status" | "settings" | "reload" }
+	| { readonly type: "om"; readonly action: "settings" | "reload" }
 	| { readonly type: "config" }
 	| { readonly type: "invalid"; readonly message: string };
 
@@ -62,7 +61,7 @@ export function parseContextCommand(argumentsText: string): ContextCommand {
 	if (words.length === 1 && words[0] === "injections") {
 		return { type: "view", view: "injections" };
 	}
-	if (words.length === 1 && (words[0] === "status" || words[0] === "settings" || words[0] === "reload")) {
+	if (words.length === 1 && (words[0] === "settings" || words[0] === "reload")) {
 		return { type: "om", action: words[0] };
 	}
 	if (words.length === 1 && words[0] === "config") {

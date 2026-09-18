@@ -6,20 +6,28 @@
 import assert from "node:assert/strict";
 import { type ChunkEntry, selectChunk } from "./chunk.ts";
 import { applyConfig, DEFAULT_CONFIG } from "./config.ts";
-import { maxDropCountForPool, selectDropCandidates } from "./dropper.ts";
-import { MEMORY_END, MEMORY_START, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
-import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } from "./parse.ts";
+import { maxDropCountForPool, runDropper, selectDropCandidates } from "./dropper.ts";
+import { estimateTokens, hashId, MEMORY_END, MEMORY_START, OM_OBSERVATIONS_DROPPED, OM_OBSERVATIONS_RECORDED, OM_REFLECTIONS_RECORDED, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
 import { registerNewTopic } from "./new-topic.ts";
+import { registerOm } from "./om.ts";
+import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } from "./parse.ts";
+import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
+import { runReflector } from "./reflector.ts";
+import { buildTranscript } from "./transcript.ts";
 import { parseContextCommand } from "./view/command.ts";
+import { gaugeFillWidth } from "./view/ui/usage-view.ts";
 
 // ── unified /context grammar ────────────────────────────────────────────────
 assert.deepEqual(parseContextCommand(""), { type: "view", view: "usage" });
 assert.deepEqual(parseContextCommand("injections"), { type: "view", view: "injections" });
-assert.deepEqual(parseContextCommand("status"), { type: "om", action: "status" });
+assert.equal(parseContextCommand("status").type, "invalid");
 assert.deepEqual(parseContextCommand("settings"), { type: "om", action: "settings" });
 assert.deepEqual(parseContextCommand("reload"), { type: "om", action: "reload" });
 assert.deepEqual(parseContextCommand("config"), { type: "config" });
 assert.equal(parseContextCommand("unknown").type, "invalid");
+assert.equal(gaugeFillWidth(5, 10, 20), 10);
+assert.equal(gaugeFillWidth(15, 10, 20), 20, "overflow saturates gauge fill");
+assert.equal(gaugeFillWidth(1, 0, 20), 0);
 
 // ── parser ──────────────────────────────────────────────────────────────────
 const labels = new Set(["e1", "e2"]);
@@ -151,16 +159,55 @@ assert.deepEqual(
   ["a"],
   "an oversized entry is still taken so the cursor cannot stall",
 );
+assert.equal(
+  buildTranscript([{ id: "summary", type: "branch_summary", summary: "Retained abandoned work" }])[0]?.text,
+  "[branch_summary] Retained abandoned work",
+  "branch summaries remain observable after tree navigation",
+);
+
+// ── prompt budgets ─────────────────────────────────────────────────────────
+assert.deepEqual(selectWithinBudget(["aa", "bbbbbbbb", "cc"], 2, (item) => item), ["aa", "cc"]);
+assert.deepEqual(selectWithinBudget(["aa", "bbbbbbbb", "cc"], 2, (item) => item, true), ["aa", "cc"]);
+const budgets = sectionBudgets(1_000, "x".repeat(400));
+assert.ok(budgets.candidates + 2 * budgets.existing < 900, "prompt sections leave framing headroom");
+{
+  const many = Array.from({ length: 30 }, (_, index) => ({
+    ...observation(index, "low"),
+    content: `candidate-${index} ${"x".repeat(500)}`,
+    tokenCount: 130,
+  }));
+  let prompt = "";
+  const registry = {
+    complete: async (_model: unknown, request: any) => {
+      prompt = `${request.systemPrompt}\n${request.messages[0].content[0].text}`;
+      const body = request.systemPrompt.includes("dropper agent") ? '{"ids":[]}' : '{"reflections":[]}';
+      return { content: [{ type: "text", text: body }] };
+    },
+  };
+  const boundedConfig = { ...DEFAULT_CONFIG, reflectorInputMaxTokens: 4_000, dropperInputMaxTokens: 4_000, observationsPoolMaxTokens: 200 };
+  await runReflector(registry as any, {} as any, boundedConfig, { observations: many, activeObservations: many, reflections: [] });
+  assert.ok(estimateTokens(prompt) <= boundedConfig.reflectorInputMaxTokens, "reflector prompt respects input cap");
+  await runDropper(registry as any, {} as any, boundedConfig, { candidates: many, activeObservations: many, reflections: [] });
+  assert.ok(estimateTokens(prompt) <= boundedConfig.dropperInputMaxTokens, "dropper prompt respects input cap");
+
+  const duplicateContent = "Existing durable fact.";
+  const duplicate = await runReflector({
+    complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ reflections: [{ content: duplicateContent, supportingObservationIds: [many[0].id] }] }) }] }),
+  } as any, {} as any, boundedConfig, {
+    observations: [many[0]],
+    activeObservations: many,
+    reflections: [{ id: hashId(duplicateContent), content: duplicateContent, supportingObservationIds: [many[1].id], tokenCount: 5, seq: 0 }],
+  });
+  assert.equal(duplicate.length, 1, "duplicate reflection prose can add coverage for a new observation");
+}
 
 // ── config validation ───────────────────────────────────────────────────────
-assert.deepEqual(applyConfig(DEFAULT_CONFIG, { enabled: "yes", model: { provider: "x" } }), DEFAULT_CONFIG);
+assert.deepEqual(applyConfig(DEFAULT_CONFIG, { enabled: false, model: { provider: "x" } }), DEFAULT_CONFIG);
 const configured = applyConfig(DEFAULT_CONFIG, {
-  enabled: false,
   model: { provider: "openai", id: "gpt-5-mini" },
   observeAfterTokens: 1,
   observationsPoolMaxTokens: 999_999,
 });
-assert.equal(configured.enabled, false);
 assert.deepEqual(configured.model, { provider: "openai", id: "gpt-5-mini" });
 assert.equal(configured.observeAfterTokens, 2_000, "clamped to the minimum");
 assert.equal(configured.observationsPoolMaxTokens, 100_000, "clamped to the maximum");
@@ -168,6 +215,44 @@ assert.ok(
   applyConfig(DEFAULT_CONFIG, { observeAfterTokens: 80_000, chunkMaxTokens: 4_000 }).chunkMaxTokens >= 80_000,
   "chunk never smaller than the trigger",
 );
+assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflectorInputMaxTokens, 4_000);
+
+// ── OM branch restore ───────────────────────────────────────────────────────
+{
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const pi = {
+    on: (name: string, handler: (...args: any[]) => unknown) => handlers.set(name, handler),
+    appendEntry: () => {},
+  };
+  const om = registerOm(pi as any);
+  let branch: any[] = [
+    { id: "m1", type: "message", message: { role: "user", content: "first branch", timestamp: 1 } },
+    {
+      id: "o1",
+      type: "custom",
+      customType: OM_OBSERVATIONS_RECORDED,
+      data: {
+        coversUpToId: "m1",
+        observations: [{ id: "aaaaaaaaaaaa", content: "branch A", timestamp: new Date(1).toISOString(), relevance: "high", sourceEntryIds: ["m1"], tokenCount: 2 }],
+      },
+    },
+    { id: "r1", type: "custom", customType: OM_REFLECTIONS_RECORDED, data: { coversUpToId: "m1", reflections: [] } },
+    { id: "d1", type: "custom", customType: OM_OBSERVATIONS_DROPPED, data: { coversUpToId: "m1", observationIds: [] } },
+  ];
+  const ctx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => false,
+    sessionManager: { getBranch: () => branch },
+  };
+  handlers.get("session_start")?.({}, ctx);
+  assert.equal(om.metrics(ctx as any).activeObservations, 1);
+  assert.match(om.recall("[aaaaaaaaaaaa]", ctx as any) ?? "", /branch A/, "stored IDs alias to canonical content hashes");
+  assert.equal(om.metrics(ctx as any).reflector.current, 0, "empty reflection batch restores progress");
+  branch = [{ id: "m2", type: "message", message: { role: "user", content: "second branch", timestamp: 2 } }];
+  handlers.get("session_tree")?.({}, ctx);
+  assert.equal(om.metrics(ctx as any).activeObservations, 0, "tree navigation cannot retain old-branch OM state");
+  assert.ok(om.metrics(ctx as any).observer.current > 0, "new branch transcript is pending observation");
+}
 
 // ── new_topic orchestration ─────────────────────────────────────────────────
 const newTopicHarness = () => {
@@ -225,6 +310,19 @@ const newTopicHarness = () => {
 
   await harness.eventHandlers.get("session_shutdown")?.({}, {});
   assert.equal((await tool.execute()).terminate, true, "shutdown clears duplicate guard");
+}
+
+{
+  const harness = newTopicHarness();
+  await harness.getTool().execute();
+  let compactOptions: any;
+  await harness.eventHandlers.get("agent_end")?.({}, {
+    compact: (options: unknown) => { compactOptions = options; },
+    ui: { notify: () => {} },
+  });
+  await harness.eventHandlers.get("session_shutdown")?.({}, {});
+  compactOptions.onComplete();
+  assert.equal(harness.sentMessages.length, 0, "late compaction callback cannot continue a closed session");
 }
 
 console.log("context selftest ok");
