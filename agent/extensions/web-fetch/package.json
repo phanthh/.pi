@@ -6,10 +6,10 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"defuddle": "^0.19.2",
-		"linkedom": "^0.18.13",
-		"lodash": "^4.17.21",
-		"mime-types": "^3.0.2",
-		"wreq-js": "^2.3.1"
+		"defuddle": "catalog:",
+		"linkedom": "catalog:",
+		"lodash": "catalog:",
+		"mime-types": "catalog:",
+		"wreq-js": "catalog:"
 	}
 }

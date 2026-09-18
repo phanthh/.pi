@@ -32,6 +32,5 @@
     "enabled": true
   },
   "hideThinkingBlock": true,
-  "outputPad": 1,
   "showCacheMissNotices": true
 }

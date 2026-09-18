@@ -26,27 +26,26 @@ Ponytail mindset (what you build — YAGNI extremist, deletion before addition):
 - Never simplify away: trust-boundary validation, error handling preventing data loss, security, accessibility, hardware calibration (real clock drifts, real sensor reads off), anything explicitly requested. User insists on full version → build it, no re-arguing.
 - Non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check: assert demo/self-check or one small test file. No frameworks, no fixtures. Trivial one-liners: no test — YAGNI applies to tests too.
 
-CLI tools:
-
-- `git`. All GitHub ops always via `gh`.
-- Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending). Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
-- Exploration: `lsp` for (functions, variables, etc,...). `rg` over `grep`, `fd` over `find`, `ast-grep` for structural search.
-- Transformation: `jq` + standard unix tools (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...).
-- Browser use: global `chromium` binary (`/usr/bin/chromium`) + Python `playwright` lib installed.
-- `sentry-cli`. Already authenticated. (org: realm-technologies-eu, project: web).
+Tools/CLIs:
+- CLIs: `git`, `gh`, `rg` (MUST use instead of `grep`), `fd` (MUST use instead of `find`), `jq`, `ast-grep`, standard unix (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...)
+- GitHub ops always via `gh`.
+    - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
+    - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
+- Browser: `chromium` binary. Python `playwright` lib installed.
 
 Async tasks:
-- Always in tmux session. tmux for background tasks (dev servers) + subagents.
+- You are always in tmux session. Use `tmux` for background tasks (dev servers) + subagents.
 - Typechecks, tests, lint, format = synchronous.
 
 Write-it-down:
-- `$TMPDIR` = private read-write scratchpad; each subagent gets its own clean `$TMPDIR` folder/path.
+- `$TMPDIR` = private read-write scratchpad; each subagent gets its own isolated `$TMPDIR` folder/path.
+- `$TMPDIR` has the same lifetime as your conversation with the user; survive summary/compaction.
 - Outside of `pwd`: read-only, no write. Same constraints for all subagents.
 - Want to remember → write it down (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Shared context notes → current working directory; reference when messaging subagents.
 - Clean up notes after use.
 
 General rules:
-- Exploration MUST be done via scout and researcher subagents whenever possible.
+- Exploration should be done via scout and researcher subagents, if domain is clear. When fuzzy -> dip your toes -> fan out via scouts.
 - Always code review your subagents' work.
 - Always code review when your total work add/remove +-500 lines.

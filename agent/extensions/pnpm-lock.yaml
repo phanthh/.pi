@@ -4,27 +4,78 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@earendil-works/pi-ai':
+      specifier: 0.85.1
+      version: 0.85.1
+    '@earendil-works/pi-coding-agent':
+      specifier: 0.85.1
+      version: 0.85.1
+    '@earendil-works/pi-tui':
+      specifier: 0.85.1
+      version: 0.85.1
+    '@jitl/quickjs-singlefile-mjs-release-sync':
+      specifier: ^0.32.0
+      version: 0.32.0
+    '@types/node':
+      specifier: ^24.0.0
+      version: 24.13.3
+    '@types/shell-quote':
+      specifier: ^1.7.5
+      version: 1.7.5
+    defuddle:
+      specifier: ^0.19.2
+      version: 0.19.3
+    linkedom:
+      specifier: ^0.18.13
+      version: 0.18.13
+    lodash:
+      specifier: ^4.17.21
+      version: 4.18.1
+    mime-types:
+      specifier: ^3.0.2
+      version: 3.0.2
+    quickjs-emscripten-core:
+      specifier: ^0.32.0
+      version: 0.32.0
+    shell-quote:
+      specifier: ^1.8.3
+      version: 1.10.0
+    typebox:
+      specifier: ^1.3.7
+      version: 1.3.23
+    typescript:
+      specifier: ^5.9.0
+      version: 5.9.3
+    vscode-languageserver-protocol:
+      specifier: ^3.17.5
+      version: 3.18.3
+    wreq-js:
+      specifier: ^2.3.1
+      version: 2.3.1
+
 importers:
 
   .:
     devDependencies:
       '@earendil-works/pi-ai':
-        specifier: ^0.84.4
-        version: 0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
+        specifier: 'catalog:'
+        version: 0.85.1(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
       '@earendil-works/pi-coding-agent':
-        specifier: ^0.84.4
-        version: 0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
+        specifier: 'catalog:'
+        version: 0.85.1(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
       '@earendil-works/pi-tui':
-        specifier: ^0.84.4
-        version: 0.84.4
+        specifier: 'catalog:'
+        version: 0.85.1
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.3
       typebox:
-        specifier: ^1.3.7
+        specifier: 'catalog:'
         version: 1.3.23
       typescript:
-        specifier: ^5.9.0
+        specifier: 'catalog:'
         version: 5.9.3
 
   anthropic-auth:
@@ -68,23 +119,23 @@ importers:
   bash-guard:
     dependencies:
       shell-quote:
-        specifier: ^1.8.3
+        specifier: 'catalog:'
         version: 1.10.0
     devDependencies:
       '@types/shell-quote':
-        specifier: ^1.7.5
+        specifier: 'catalog:'
         version: 1.7.5
 
   codemode:
     dependencies:
       '@jitl/quickjs-singlefile-mjs-release-sync':
-        specifier: ^0.32.0
+        specifier: 'catalog:'
         version: 0.32.0
       quickjs-emscripten-core:
-        specifier: ^0.32.0
+        specifier: 'catalog:'
         version: 0.32.0
       typescript:
-        specifier: ^5.9.0
+        specifier: 'catalog:'
         version: 5.9.3
 
   compact: {}
@@ -94,8 +145,12 @@ importers:
   lsp:
     dependencies:
       vscode-languageserver-protocol:
-        specifier: ^3.17.5
+        specifier: 'catalog:'
         version: 3.18.3
+
+  project-skill-rules: {}
+
+  reload: {}
 
   tmux:
     dependencies:
@@ -116,19 +171,19 @@ importers:
   web-fetch:
     dependencies:
       defuddle:
-        specifier: ^0.19.2
+        specifier: 'catalog:'
         version: 0.19.3
       linkedom:
-        specifier: ^0.18.13
+        specifier: 'catalog:'
         version: 0.18.13
       lodash:
-        specifier: ^4.17.21
+        specifier: 'catalog:'
         version: 4.18.1
       mime-types:
-        specifier: ^3.0.2
+        specifier: 'catalog:'
         version: 3.0.2
       wreq-js:
-        specifier: ^2.3.1
+        specifier: 'catalog:'
         version: 2.3.1
 
   web-search: {}
@@ -141,15 +196,6 @@ packages:
 
   '@anthropic-ai/sdk@0.123.0':
     resolution: {integrity: sha512-Y9oX9mPNGZClHQOFqrWRk43Srcu/UHuPq3rfxxOq7JgW0gi+lJA2MAOK4Ul3k/+AUrwRWFJvd0tK3oC0Pw25dw==}
-    hasBin: true
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
-    peerDependenciesMeta:
-      zod:
-        optional: true
-
-  '@anthropic-ai/sdk@0.91.1':
-    resolution: {integrity: sha512-LAmu761tSN9r66ixvmciswUj/ZC+1Q4iAfpedTfSVLeswRwnY3n2Nb6Tsk+cLPP28aLOPWeMgIuTuCcMC6W/iw==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -353,30 +399,12 @@ packages:
     resolution: {integrity: sha512-VDlkEC3dhCzQ5fcyH1OhG19dq+6jCn+rqc/iXFivwDYGR5anwo2RCiXij9PpHhqNR5GuhhE+Er69Zi1Sn4eY6w==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-agent-core@0.84.4':
-    resolution: {integrity: sha512-HyUnjaOXj6oN/6SNcr8A1J/ElRQA50FtIE0XUTSKAQVqmdlb9qdojOyUQwF/jULE5+yOEtGuVgi/N1RnBiNG+g==}
-    engines: {node: '>=22.19.0'}
-
   '@earendil-works/pi-agent-core@0.85.1':
     resolution: {integrity: sha512-hIXIP3eAWueAYiAl8aMvWCvvZ8Q5gT3Dip5bE5uJyIGh4+YlWRjtMLI4BaeoXoSs93zndjue61u1B/vhefLnuA==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-ai@0.84.4':
-    resolution: {integrity: sha512-AClAZxf5+c4RRu44NJPS6wyQy+Nmq+Mzyyrdvm4ZVMNuixelO02RZX4G4Aq1F145Yzp43wnM5S+hLlSI7ypfVw==}
-    engines: {node: '>=22.19.0'}
-    hasBin: true
-
   '@earendil-works/pi-ai@0.85.1':
     resolution: {integrity: sha512-+VgVIJDkDO2efYJKEEqvPTH4zmnIaXdAppGbO+vKFA9qy5PdhFiAenuFAkU+oiCSfOC4dMHDyrjdQeL4ZoC5CQ==}
-    engines: {node: '>=22.19.0'}
-    hasBin: true
-
-  '@earendil-works/pi-client@0.84.4':
-    resolution: {integrity: sha512-q398WY/3ZQHTizk7IKxApzqFV0xt4yM9LkSkwyqeLK5Bj5RwRjOWxESt26z4LgNp4O+8hqhqFPf/8fj4H5rE4A==}
-    engines: {node: '>=22.19.0'}
-
-  '@earendil-works/pi-coding-agent@0.84.4':
-    resolution: {integrity: sha512-jmOlrqUmvhh/siNWFRXjYLJzhKFIHNsAQaysRwzQPQFnPAaV/vhqHsLH/MBsIISA1Rjj7WTUFR3nJrpXoLx39w==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
@@ -385,20 +413,8 @@ packages:
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@earendil-works/pi-protocol@0.84.4':
-    resolution: {integrity: sha512-acyE9ozxkMiWiz/xyWpU0O9vwnYv0hyG889Vniv6Sg9c9zfsX+8MePnDNphBacY2Fvm1rxdsGmiVDSZl9yuDFA==}
-    engines: {node: '>=22.19.0'}
-
-  '@earendil-works/pi-telemetry@0.84.4':
-    resolution: {integrity: sha512-8e2CuxM+ht+hedQXTZmi5JVl6/xDK9RpSDL2+MbITevKYQhMZ/z6lJOTFgox3HQyGxO8mOZEtYGVeQNaD4OzqA==}
-    engines: {node: '>=22.19.0'}
-
   '@earendil-works/pi-telemetry@0.85.1':
     resolution: {integrity: sha512-Bg/YN6kA7Swja/NQxka8xFdecb4E/auIEGF2G5A25EaQXhRnPj300/7/KpgsDDMYUzHTDAv4RyUxaQPJKW81Rw==}
-    engines: {node: '>=22.19.0'}
-
-  '@earendil-works/pi-tui@0.84.4':
-    resolution: {integrity: sha512-nPUnwDkLtupPXnZQYrCwPFcuTydCDqTY6ZbFqhsL4S4kVq0AT418kPa/6uXwtaCD+MjBNBltb7ScTYX65yeE1w==}
     engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-tui@0.85.1':
@@ -1695,12 +1711,6 @@ snapshots:
     optionalDependencies:
       zod: 4.1.8
 
-  '@anthropic-ai/sdk@0.91.1(zod@4.1.8)':
-    dependencies:
-      json-schema-to-ts: 3.1.1
-    optionalDependencies:
-      zod: 4.1.8
-
   '@aws-crypto/sha256-browser@5.2.0':
     dependencies:
       '@aws-crypto/sha256-js': 5.2.0
@@ -1740,7 +1750,7 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.7.3
+      '@smithy/node-http-handler': 4.11.3
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
@@ -1975,22 +1985,6 @@ snapshots:
     dependencies:
       esbuild: 0.28.1
 
-  '@earendil-works/pi-agent-core@0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)':
-    dependencies:
-      '@earendil-works/pi-ai': 0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
-      '@earendil-works/pi-telemetry': 0.84.4
-      diff: 8.0.4
-      ignore: 7.0.5
-      typebox: 1.3.7
-      yaml: 2.9.0
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
   '@earendil-works/pi-agent-core@0.85.1(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)':
     dependencies:
       '@earendil-works/chord': 0.85.1
@@ -2000,26 +1994,6 @@ snapshots:
       ignore: 7.0.5
       typebox: 1.3.7
       yaml: 2.9.0
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@earendil-works/pi-ai@0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)':
-    dependencies:
-      '@anthropic-ai/sdk': 0.91.1(zod@4.1.8)
-      '@aws-sdk/client-bedrock-runtime': 3.1048.0
-      '@earendil-works/pi-telemetry': 0.84.4
-      '@google/genai': 1.52.0(supports-color@10.2.2)
-      '@smithy/node-http-handler': 4.7.3
-      http-proxy-agent: 7.0.2(supports-color@10.2.2)
-      https-proxy-agent: 7.0.6(supports-color@10.2.2)
-      openai: 6.40.0(ws@8.21.3)(zod@4.1.8)
-      partial-json: 0.1.7
-      typebox: 1.3.7
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - bufferutil
@@ -2040,42 +2014,6 @@ snapshots:
       openai: 6.40.0(ws@8.21.3)(zod@4.1.8)
       partial-json: 0.1.7
       typebox: 1.3.7
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@earendil-works/pi-client@0.84.4':
-    dependencies:
-      '@earendil-works/pi-protocol': 0.84.4
-
-  '@earendil-works/pi-coding-agent@0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)':
-    dependencies:
-      '@earendil-works/pi-agent-core': 0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
-      '@earendil-works/pi-ai': 0.84.4(supports-color@10.2.2)(ws@8.21.3)(zod@4.1.8)
-      '@earendil-works/pi-client': 0.84.4
-      '@earendil-works/pi-protocol': 0.84.4
-      '@earendil-works/pi-tui': 0.84.4
-      '@silvia-odwyer/photon-node': 0.3.4
-      chalk: 5.6.2
-      cross-spawn: 7.0.6
-      diff: 8.0.4
-      grok-mermaid: 0.2.2
-      highlight.js: 10.7.3
-      hosted-git-info: 9.0.3
-      ignore: 7.0.5
-      jiti: 2.7.0
-      minimatch: 10.2.5
-      proper-lockfile: 4.1.2
-      semver: 7.8.0
-      typebox: 1.3.7
-      undici: 8.9.0
-      yaml: 2.9.0
-    optionalDependencies:
-      '@mariozechner/clipboard': 0.3.9
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - bufferutil
@@ -2115,18 +2053,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-protocol@0.84.4':
-    dependencies:
-      typebox: 1.3.7
-
-  '@earendil-works/pi-telemetry@0.84.4': {}
-
   '@earendil-works/pi-telemetry@0.85.1': {}
-
-  '@earendil-works/pi-tui@0.84.4':
-    dependencies:
-      get-east-asian-width: 1.6.0
-      marked: 18.0.5
 
   '@earendil-works/pi-tui@0.85.1':
     dependencies:
