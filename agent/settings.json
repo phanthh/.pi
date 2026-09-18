@@ -3,7 +3,6 @@
   "theme": "tokyonight",
   "packages": [
     "npm:@sreetej510/pi-usage",
-    "npm:pi-context-view",
     "npm:pi-mcp-adapter"
   ],
   "extensions": [

@@ -36,6 +36,7 @@ The program is an async function body: top-level await and return are supported.
   extensions.<tool>(args)             — tools registered by other extensions
   tools.list/describe/call            — discovery, plus calling a ref computed at runtime
   π.<key>                             — strings passed in the payloads parameter
+  process.env.<key>                   — environment variables from Pi's process
   print(...)                          — log a line (returned alongside the result)
 
 Independent calls run in parallel with Promise.all. Intermediate values stay in the sandbox: only the returned value reaches the conversation, so filter and project before returning. The code is type-checked before it runs; type errors come back with line numbers instead of executing.
@@ -162,6 +163,7 @@ export default function codeMode(pi: ExtensionAPI): void {
 			);
 			const result = await execute(params.code, dispatcher.hostCall, {
 				payloads: params.payloads,
+				env: process.env,
 				timeoutMs,
 				memoryLimitBytes: MEMORY_LIMIT_BYTES,
 				transpiledCode: checked.javascript,

@@ -28,7 +28,7 @@ extensions/
 | `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
 | `bash-guard` | hook on `bash` | subagents: headless hard-block; main session: off by default + irreversible-op floor. `/bash-guard` toggles |
 | `codemode` | `code_exec` tool | type-checked TS program run in QuickJS sandbox; calls pi tools from inside. Port of pi-fabric kernel |
-| `compact` | `recall` tool + before-compact hook | session compaction + searchable history (`src/core/*` ranking, sections, drill-down) |
+| `context` | `/context`, `/compact`, `/recall`; `recall` + `new_topic` tools | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), topic cutovers. Has its own `README.md` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer) |
 | `tmux` | `tmux` tool | named panes for long-running processes |

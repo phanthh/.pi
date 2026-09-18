@@ -126,6 +126,8 @@ declare const pi: PiCoreTools;
 declare const tools: DiscoveryTools;
 /** Strings passed in the tool call's payloads parameter. */
 declare const π: Record<string, string>;
+/** Snapshot of environment variables from the Pi host process. */
+declare const process: { env: Record<string, string | undefined> };
 /** Write a line to the execution log (returned alongside the result). */
 declare function print(...values: any[]): void;
 `;

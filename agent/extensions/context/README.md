@@ -1,0 +1,99 @@
+# context
+
+Monolithic context management extension: context usage/injection visualization, deterministic compaction, recall, full observational memory (OM), and topic cutovers.
+
+All implementation lives in this package. Compaction internals are under `src/compact/`; no separate compact package or extension is loaded.
+
+## Architecture
+
+```text
+agent_start / turn_end
+  └─ single background pipeline
+       Observer  → om.observations.recorded
+       Reflector → om.reflections.recorded
+       Dropper   → om.observations.dropped tombstones
+
+session_before_compact
+  └─ deterministic compact summary
+       └─ bounded active observations + reflections
+```
+
+Ported OM behavior follows `pi-blackhole`:
+
+- **Observer:** oldest-first contiguous transcript chunks; strict cited-source validation; deterministic content IDs; timestamp from latest cited source; exact dedupe.
+- **Reflector:** distills scarce durable facts from new observations. Every support ID must be valid or proposal is rejected. Support becomes Dropper coverage evidence.
+- **Dropper:** defaults to keep. LLM proposes candidate IDs; deterministic fullness gate, hard drop limit, then coverage → relevance → age ranking chooses removals.
+- **Ledger:** append-only custom entries. Drops are tombstones; original observations and transcript remain recallable.
+- **Projection:** active observations ranked by relevance and recency; newest reflections retained first. Independent hard token budgets. Previous injected block is stripped before replacement.
+- **Isolation:** workers use separate provider completions with fixed system prompts. Main session prompt/tools remain unchanged; memory enters only during compaction.
+- **Lifecycle:** one pipeline runs at a time. Session switch/shutdown aborts work and stale results are discarded. Stage model failures fall through configured candidates; a failed stage stops later stages for that run.
+
+Unlike pi-blackhole's multi-turn tool loops, each stage uses one strict-JSON completion. This preserves stage semantics and validation while bounding requests and output.
+
+## Config
+
+Global `~/.pi/agent/om.json`, shallow-merged with trusted project `.pi/om.json`:
+
+```json
+{
+  "enabled": true,
+  "model": null,
+  "observerModel": null,
+  "reflectorModel": null,
+  "dropperModel": null,
+  "observerFallbackModels": [],
+  "reflectorFallbackModels": [],
+  "dropperFallbackModels": [],
+  "sessionFallback": true,
+  "observeAfterTokens": 15000,
+  "reflectAfterTokens": 25000,
+  "chunkMaxTokens": 40000,
+  "observationsPoolMaxTokens": 20000,
+  "reflectionsPoolMaxTokens": 8000,
+  "reflectorInputMaxTokens": 80000,
+  "dropperInputMaxTokens": 80000,
+  "dropperPressureThreshold": 0.7,
+  "dropperPoolFullnessThreshold": 0.1,
+  "maxOutputTokens": 2000
+}
+```
+
+Model resolution per stage:
+
+```text
+stage model → stage fallback models → shared model → session model (when enabled)
+```
+
+Use cheap dedicated models and set `sessionFallback: false` for predictable cost. Unknown/invalid fields are ignored; numeric values are clamped. Legacy `memoryMaxTokens` remains accepted as an alias for `observationsPoolMaxTokens`.
+
+## `/context`
+
+- `/context` or `/context usage` — interactive context-window usage map.
+- `/context injections` — inspect initial system prompt, tools, context files, skills, and extension additions.
+- `/context status` — OM pipeline, ledger, stage progress, pool pressure, and last error.
+- `/context settings` — common OM toggles/thresholds; writes global `om.json`.
+- `/context reload` — reload global + trusted project OM config.
+- `/context config` — create context-view color overrides at `~/.pi/agent/extensions/pi-context-view.json`.
+
+Usage/injection views were folded from `pi-context-view` 0.5.2. They passively capture initial context and add no model-context instructions. Before the first real turn, opening a view may run one silent empty-message probe. Pi exposes no extension contribution API for built-in `/settings`, so OM uses `/context settings`.
+
+## `new_topic`
+
+`new_topic` is always active. It ends current run; the `agent_end` hook compacts with `keep:1`, then invisibly resumes without duplicating latest user message. No internal slash command is exposed:
+
+```text
+new_topic → turn ends → compact keep:1 → invisible continue
+```
+
+Use only for sharp topic cutovers, never follow-ups or subtasks. `/recall` still reaches compacted history.
+
+## Attribution
+
+Usage/injection visualization is derived from [dimk90/pi-context-view](https://github.com/dimk90/pi-context-view) under MIT. License retained in `THIRD_PARTY_LICENSES/pi-context-view.txt`.
+
+## Checks
+
+```sh
+pnpm --filter pi-context selftest
+pnpm check
+```

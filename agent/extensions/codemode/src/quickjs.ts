@@ -1,8 +1,8 @@
 /**
- * QuickJS (WASM) sandbox. Guest code has no process, require, fs, net, or timers
- * beyond what is installed here; the only escape is one host function that
- * takes (ref, args) and resolves JSON. Ported (trimmed) from pi-fabric
- * src/runtime/quickjs-runtime.ts — agents/mesh/memory/speculation removed.
+ * QuickJS (WASM) sandbox. Guest code has only a process.env snapshot; no
+ * require, fs, net, or timers beyond what is installed here. The only escape
+ * is one host function that takes (ref, args) and resolves JSON. Ported
+ * (trimmed) from pi-fabric src/runtime/quickjs-runtime.ts.
  */
 import releaseSyncVariant from "@jitl/quickjs-singlefile-mjs-release-sync";
 import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core";
@@ -18,6 +18,7 @@ export type HostCall = (
 
 export interface SandboxOptions {
 	payloads?: Record<string, string>;
+	env?: Record<string, string | undefined>;
 	timeoutMs: number;
 	memoryLimitBytes: number;
 	transpiledCode?: string;
@@ -289,6 +290,10 @@ export const execute = async (
 		const payloadHandle = jsonHandle(context, jsonObject, jsonParse, payloads);
 		context.setProp(context.global, "π", payloadHandle);
 		payloadHandle.dispose();
+
+		const processHandle = jsonHandle(context, jsonObject, jsonParse, { env: options.env ?? {} });
+		context.setProp(context.global, "process", processHandle);
+		processHandle.dispose();
 
 		const setup = context.evalCode(guestSetupSource(), "codemode-setup.js");
 		if (setup.error) {

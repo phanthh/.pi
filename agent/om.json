@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "model": null,
+  "observerModel": null,
+  "reflectorModel": null,
+  "dropperModel": null,
+  "observerFallbackModels": [],
+  "reflectorFallbackModels": [],
+  "dropperFallbackModels": [],
+  "sessionFallback": true,
+  "observeAfterTokens": 15000,
+  "reflectAfterTokens": 25000,
+  "chunkMaxTokens": 40000,
+  "observationsPoolMaxTokens": 20000,
+  "reflectionsPoolMaxTokens": 8000,
+  "reflectorInputMaxTokens": 80000,
+  "dropperInputMaxTokens": 80000,
+  "dropperPressureThreshold": 0.7,
+  "dropperPoolFullnessThreshold": 0.1,
+  "maxOutputTokens": 2000
+}

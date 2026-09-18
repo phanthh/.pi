@@ -46,6 +46,7 @@ const run = async (code: string, payloads?: Record<string, string>, timeoutMs = 
 	if (checked.errors.length > 0) return { typeErrors: checked.errors };
 	const result = await execute(code, hostCall, {
 		payloads,
+		env: { TMPDIR: "/tmp/pi-codemode", CODEMODE_TEST_VALUE: "available" },
 		timeoutMs,
 		memoryLimitBytes: 64 * 1024 * 1024,
 		transpiledCode: checked.javascript,
@@ -166,9 +167,18 @@ const tests: Array<[string, () => Promise<void> | void]> = [
 		},
 	],
 	[
+		"host environment is readable through process.env",
+		async () => {
+			const outcome = await run(
+				`const tmp = process.env.TMPDIR!; return [tmp, process.env["CODEMODE_TEST_VALUE"]];`,
+			);
+			assert.deepEqual(outcome.result?.value, ["/tmp/pi-codemode", "available"]);
+		},
+	],
+	[
 		"sandbox denies ambient capabilities",
 		async () => {
-			for (const global of ["process", "require", "fetch", "globalThis.Deno"]) {
+			for (const global of ["require", "fetch", "globalThis.Deno"]) {
 				const outcome = await run(`return typeof ${global};`);
 				assert.equal(outcome.result?.value, "undefined", `${global} must not exist`);
 			}

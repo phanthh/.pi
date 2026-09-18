@@ -46,6 +46,6 @@ Write-it-down:
 - Clean up notes after use.
 
 General rules:
-- Exploration should be done via scout and researcher subagents, if domain is clear. When fuzzy -> dip your toes -> fan out via scouts.
+- Exploration should be done via scout and researcher subagents IFF separation of domain is clear. When fuzzy -> search/read/list to find separation of domains -> fan out via scouts.
 - Always code review your subagents' work.
 - Always code review when your total work add/remove +-500 lines.

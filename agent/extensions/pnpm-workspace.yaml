@@ -21,8 +21,8 @@ catalog:
 
 allowBuilds:
   "@google/genai": false
-  esbuild: set this to true or false
-  lefthook: set this to true or false
-  msgpackr-extract: set this to true or false
+  esbuild: false
+  lefthook: false
+  msgpackr-extract: false
   protobufjs: false
-  workerd: set this to true or false
+  workerd: false
