@@ -13,6 +13,6 @@ export { renderMessage, type RenderedEntry } from "./core/render-entries.ts";
  */
 export const registerCompact = (pi: ExtensionAPI, options: CompactRegistrationOptions = {}) => {
   registerBeforeCompactHook(pi, options);
-  registerRecallCommand(pi);
-  registerRecallTool(pi, options.resolveRecall);
+  registerRecallCommand(pi, options.resolveRecall, options.augmentRecall);
+  registerRecallTool(pi, options.resolveRecall, options.augmentRecall);
 };

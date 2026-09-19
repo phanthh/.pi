@@ -28,7 +28,9 @@
   "collapseChangelog": true,
   "treeFilterMode": "default",
   "compaction": {
-    "enabled": true
+    "enabled": true,
+    "overrideMaxTokens": 250000,
+		"reserveTokens": 100000
   },
   "branchSummary": {
     "skipPrompt": true

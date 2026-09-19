@@ -28,7 +28,7 @@ export const loadAllMessages = (
 
     const allowed = !allowedEntryIds || allowedEntryIds.has(e.id);
     if (allowed) {
-      rendered.push(renderMessage(e.message, messageIndex, full));
+      rendered.push(renderMessage(e.message, messageIndex, full, typeof e.id === "string" ? e.id : undefined));
       rawMessages.push(e.message);
     }
     messageIndex++;

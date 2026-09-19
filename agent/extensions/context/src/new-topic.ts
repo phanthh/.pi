@@ -14,7 +14,11 @@ export interface NewTopicDependencies {
   triggerInvisibleContinue: (pi: ExtensionAPI) => void;
 }
 
-export const registerNewTopic = (pi: ExtensionAPI, dependencies: NewTopicDependencies) => {
+export interface NewTopicRuntime {
+  isPending: () => boolean;
+}
+
+export const registerNewTopic = (pi: ExtensionAPI, dependencies: NewTopicDependencies): NewTopicRuntime => {
   let pending = false;
   let compacting = false;
   let generation = 0;
@@ -99,4 +103,6 @@ export const registerNewTopic = (pi: ExtensionAPI, dependencies: NewTopicDepende
       };
     },
   });
+
+  return { isPending: () => pending };
 };

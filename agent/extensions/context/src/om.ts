@@ -54,6 +54,7 @@ export interface OmRuntime {
   reload: (ctx: { cwd: string; isProjectTrusted: () => boolean }) => OmConfig;
   metrics: (ctx: ExtensionContext) => OmMetrics;
   recall: (query: string, ctx: ExtensionContext) => string | undefined;
+  augmentRecall: (output: string, entryIds: string[], ctx: ExtensionContext) => string;
   enrichSummary: (summary: string) => string;
 }
 
@@ -63,11 +64,18 @@ const strings = (value: unknown): string[] | null =>
   Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
 const relevance = (value: unknown): Observation["relevance"] =>
   value === "low" || value === "high" || value === "critical" ? value : "medium";
+const validTimestamp = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : undefined;
+};
 
 const readObservationBatch = (
   value: unknown,
   aliases: Map<string, string>,
   validSourceIds: ReadonlySet<string>,
+  sourceTimestamps: ReadonlyMap<string, string>,
+  batchTimestamp?: string,
 ): ObservationBatch | null => {
   const data = record(value);
   const coversUpToId = data?.coversUpToId ?? data?.throughEntryId;
@@ -82,10 +90,15 @@ const readObservationBatch = (
     if (!content) continue;
     const id = hashId(content);
     if (typeof item.id === "string" && /^[a-f0-9]{12}$/i.test(item.id)) aliases.set(item.id.toLowerCase(), id);
+    let timestamp = validTimestamp(item.timestamp);
+    if (!timestamp) {
+      for (const sourceId of sourceEntryIds) timestamp = sourceTimestamps.get(sourceId) ?? timestamp;
+    }
+    timestamp ??= validTimestamp(batchTimestamp) ?? "unknown";
     observations.push({
       id,
       content,
-      timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date(0).toISOString(),
+      timestamp,
       relevance: relevance(item.relevance),
       sourceEntryIds,
       tokenCount: estimateTokens(content),
@@ -159,11 +172,15 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     const observationIds = new Set<string>();
     const reflectionIds = new Set<string>();
     const branch = ctx.sessionManager.getBranch() as readonly SessionEntryLike[];
+    const transcript = buildTranscript(branch);
+    const sourceTimestamps = new Map(
+      transcript.flatMap((entry) => entry.timestamp ? [[entry.id, entry.timestamp] as const] : []),
+    );
     const validSourceIds = new Set(branch.filter((entry) => entry.type === "message" || entry.type === "branch_summary").flatMap((entry) => entry.id ? [entry.id] : []));
     for (const entry of branch) {
       if (entry.type !== "custom") continue;
       if (entry.customType === OM_OBSERVATIONS_RECORDED || entry.customType === LEGACY_OBSERVATIONS_RECORDED) {
-        const batch = readObservationBatch(entry.data, idAliases, validSourceIds);
+        const batch = readObservationBatch(entry.data, idAliases, validSourceIds, sourceTimestamps, entry.timestamp);
         if (!batch) continue;
         observerCursor = batch.coversUpToId;
         for (const item of batch.observations) {
@@ -401,7 +418,9 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       const id = idAliases.get(requestedId) ?? requestedId;
       const reflection = reflections.find((item) => item.id === id);
       const directObservation = observations.find((item) => item.id === id);
-      if (!reflection && !directObservation) return undefined;
+      if (!reflection && !directObservation) {
+        return `No observation or reflection with id ${requestedId} was found on the current branch.`;
+      }
       const related = directObservation
         ? [directObservation]
         : observations.filter((item) => reflection!.supportingObservationIds.includes(item.id));
@@ -424,8 +443,29 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       const memory = reflection
         ? `Reflection [${reflection.id}]: ${reflection.content}`
         : `Observation [${directObservation!.id}]: ${directObservation!.content}`;
-      const evidence = related.map((item) => `[${item.id}] ${item.timestamp} [${item.relevance}] ${item.content}`).join("\n");
+      const evidence = related.map((item) =>
+        `[${item.id}]${droppedIds.has(item.id) ? " [dropped]" : ""} ${item.timestamp} [${item.relevance}] ${item.content}`,
+      ).join("\n");
       return `${memory}\n\nSupporting observations:\n${evidence}\n\nSource entries:\n${rendered.join("\n\n") || "(source entries are not on the active branch)"}`;
+    },
+    augmentRecall: (output, entryIds) => {
+      if (entryIds.length === 0) return output;
+      const sourceIds = new Set(entryIds);
+      const relatedObservations = observations.filter((observation) =>
+        observation.sourceEntryIds.some((id) => sourceIds.has(id)),
+      );
+      if (relatedObservations.length === 0) return output;
+      const relatedIds = new Set(relatedObservations.map((observation) => observation.id));
+      const relatedReflections = reflections.filter((reflection) =>
+        reflection.supportingObservationIds.some((id) => relatedIds.has(id)),
+      );
+      const lines = [
+        ...relatedReflections.map((reflection) => `[${reflection.id}] [reflection] ${reflection.content}`),
+        ...relatedObservations.map((observation) =>
+          `[${observation.id}]${droppedIds.has(observation.id) ? " [dropped]" : ""} ${observation.timestamp} [${observation.relevance}] ${observation.content}`,
+        ),
+      ];
+      return `${output}\n\nRelated observational memory:\n${lines.join("\n")}`;
     },
     enrichSummary: (summary) => {
       const stripped = stripMemoryBlock(summary);

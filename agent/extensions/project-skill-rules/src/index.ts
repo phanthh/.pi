@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, loadSkillsFromDir, type ExtensionAPI, type Skill } from "@earendil-works/pi-coding-agent";
 
 export interface SkillRule {
 	path: string | string[];
@@ -14,6 +14,7 @@ export interface SkillRulesConfig {
 }
 
 const CONFIG_PATH = resolve(getAgentDir(), "project-skill-rules.json");
+const GLOBAL_SKILLS_DIR = resolve(getAgentDir(), "skills");
 
 function resolveRulePath(path: string, home: string): string {
 	if (path === "~") return resolve(home);
@@ -114,6 +115,14 @@ function permits(allowed: ReadonlySet<string> | undefined, skillName: string): b
 	return allowed === undefined || allowed.has("*") || allowed.has(skillName);
 }
 
+export function isGlobalSkill(skill: Pick<Skill, "filePath">, globalSkillsDir = GLOBAL_SKILLS_DIR): boolean {
+	return isWithin(resolve(skill.filePath), resolve(globalSkillsDir));
+}
+
+function globalSkillNames(): ReadonlySet<string> {
+	return new Set(loadSkillsFromDir({ dir: GLOBAL_SKILLS_DIR, source: "user" }).skills.map((skill) => skill.name));
+}
+
 export default function projectSkillRules(pi: ExtensionAPI): void {
 	let reportedError: string | undefined;
 
@@ -135,7 +144,7 @@ export default function projectSkillRules(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event, ctx) => {
 		const allowed = allowedFor(ctx.cwd, (message) => ctx.ui.notify(message, "error"));
 		event.systemPromptOptions.skills = (event.systemPromptOptions.skills ?? []).filter((skill) =>
-			permits(allowed, skill.name),
+			isGlobalSkill(skill) || permits(allowed, skill.name),
 		);
 	});
 
@@ -145,7 +154,7 @@ export default function projectSkillRules(pi: ExtensionAPI): void {
 
 		const skillName = command[1].replace(/:\d+$/, "");
 		const allowed = allowedFor(ctx.cwd, (message) => ctx.ui.notify(message, "error"));
-		if (permits(allowed, skillName)) return { action: "continue" as const };
+		if (globalSkillNames().has(skillName) || permits(allowed, skillName)) return { action: "continue" as const };
 
 		ctx.ui.notify(`Skill "${skillName}" is not allowed for ${ctx.cwd}`, "warning");
 		return { action: "handled" as const };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findAllowedSkills, parseConfig, type SkillRulesConfig } from "./index.ts";
+import { findAllowedSkills, isGlobalSkill, parseConfig, type SkillRulesConfig } from "./index.ts";
 
 const config: SkillRulesConfig = {
 	rules: [
@@ -63,4 +63,10 @@ test("rejects invalid path arrays and regex", () => {
 
 test("leaves skills unrestricted when no rule matches", () => {
 	assert.equal(findAllowedSkills("/tmp/project", { rules: [] }, "/home/me"), undefined);
+});
+
+test("recognizes only skills inside the global skills directory", () => {
+	assert.equal(isGlobalSkill({ filePath: "/home/me/.pi/agent/skills/review/SKILL.md" }, "/home/me/.pi/agent/skills"), true);
+	assert.equal(isGlobalSkill({ filePath: "/home/me/project/.pi/skills/review/SKILL.md" }, "/home/me/.pi/agent/skills"), false);
+	assert.equal(isGlobalSkill({ filePath: "/home/me/.pi/agent/skills-old/review/SKILL.md" }, "/home/me/.pi/agent/skills"), false);
 });

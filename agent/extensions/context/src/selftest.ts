@@ -5,6 +5,8 @@
  */
 import assert from "node:assert/strict";
 import { type ChunkEntry, selectChunk } from "./chunk.ts";
+import { formatContextUsage } from "./compact/footer.ts";
+import { effectiveMaxTokens } from "./compact/max-tokens.ts";
 import { applyConfig, DEFAULT_CONFIG } from "./config.ts";
 import { maxDropCountForPool, runDropper, selectDropCandidates } from "./dropper.ts";
 import { estimateTokens, hashId, MEMORY_END, MEMORY_START, OM_OBSERVATIONS_DROPPED, OM_OBSERVATIONS_RECORDED, OM_REFLECTIONS_RECORDED, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
@@ -15,6 +17,7 @@ import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
 import { runReflector } from "./reflector.ts";
 import { buildTranscript } from "./transcript.ts";
 import { parseContextCommand } from "./view/command.ts";
+import { toReportedUsage } from "./view/usage.ts";
 import { gaugeFillWidth } from "./view/ui/usage-view.ts";
 
 // ── unified /context grammar ────────────────────────────────────────────────
@@ -28,6 +31,23 @@ assert.equal(parseContextCommand("unknown").type, "invalid");
 assert.equal(gaugeFillWidth(5, 10, 20), 10);
 assert.equal(gaugeFillWidth(15, 10, 20), 20, "overflow saturates gauge fill");
 assert.equal(gaugeFillWidth(1, 0, 20), 0);
+assert.equal(effectiveMaxTokens(400_000, 250_000), 250_000);
+assert.equal(effectiveMaxTokens(128_000, 250_000), 128_000, "override cannot exceed model capacity");
+assert.deepEqual(
+  formatContextUsage(125_000, 250_000, 1_000_000, true),
+  { text: "50.0%/250k (1.0M) (auto)", percent: 50 },
+  "footer uses override denominator and retains the model window in parentheses",
+);
+assert.deepEqual(
+  formatContextUsage(null, 128_000, 128_000, false),
+  { text: "?/128k", percent: 0 },
+  "footer omits a redundant model window when the override does not lower it",
+);
+assert.deepEqual(
+  toReportedUsage({ tokens: 200_000, contextWindow: 400_000, percent: 50 }, 250_000),
+  { tokens: 200_000, contextWindow: 250_000, percent: 80 },
+  "usage view reports the effective override window",
+);
 
 // ── parser ──────────────────────────────────────────────────────────────────
 const labels = new Set(["e1", "e2"]);
@@ -226,18 +246,27 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
   };
   const om = registerOm(pi as any);
   let branch: any[] = [
-    { id: "m1", type: "message", message: { role: "user", content: "first branch", timestamp: 1 } },
+    { id: "m1", type: "message", message: { role: "user", content: "first branch", timestamp: Date.parse("2026-09-18T12:34:56.000Z") } },
     {
       id: "o1",
       type: "custom",
+      timestamp: "2026-09-18T12:35:00.000Z",
       customType: OM_OBSERVATIONS_RECORDED,
       data: {
         coversUpToId: "m1",
-        observations: [{ id: "aaaaaaaaaaaa", content: "branch A", timestamp: new Date(1).toISOString(), relevance: "high", sourceEntryIds: ["m1"], tokenCount: 2 }],
+        observations: [{ id: "aaaaaaaaaaaa", content: "branch A", relevance: "high", sourceEntryIds: ["m1"], tokenCount: 2 }],
       },
     },
-    { id: "r1", type: "custom", customType: OM_REFLECTIONS_RECORDED, data: { coversUpToId: "m1", reflections: [] } },
-    { id: "d1", type: "custom", customType: OM_OBSERVATIONS_DROPPED, data: { coversUpToId: "m1", observationIds: [] } },
+    {
+      id: "r1",
+      type: "custom",
+      customType: OM_REFLECTIONS_RECORDED,
+      data: {
+        coversUpToId: "m1",
+        reflections: [{ id: "bbbbbbbbbbbb", content: "Branch A remains durable.", supportingObservationIds: ["aaaaaaaaaaaa"], tokenCount: 5 }],
+      },
+    },
+    { id: "d1", type: "custom", customType: OM_OBSERVATIONS_DROPPED, data: { coversUpToId: "m1", observationIds: ["aaaaaaaaaaaa"] } },
   ];
   const ctx = {
     cwd: process.cwd(),
@@ -245,9 +274,23 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
     sessionManager: { getBranch: () => branch },
   };
   handlers.get("session_start")?.({}, ctx);
-  assert.equal(om.metrics(ctx as any).activeObservations, 1);
-  assert.match(om.recall("[aaaaaaaaaaaa]", ctx as any) ?? "", /branch A/, "stored IDs alias to canonical content hashes");
-  assert.equal(om.metrics(ctx as any).reflector.current, 0, "empty reflection batch restores progress");
+  assert.equal(om.metrics(ctx as any).activeObservations, 0);
+  const restoredObservation = om.recall("[aaaaaaaaaaaa]", ctx as any) ?? "";
+  assert.match(restoredObservation, /branch A/, "stored IDs alias to canonical content hashes");
+  assert.match(restoredObservation, /\[dropped\]/, "exact recall reports observation tombstones");
+  assert.match(restoredObservation, /2026-09-18T12:34:56\.000Z/, "missing legacy timestamps derive from source entries");
+  assert.match(om.recall("bbbbbbbbbbbb", ctx as any) ?? "", /Branch A remains durable/, "reflection IDs recall supporting evidence");
+  assert.match(
+    om.augmentRecall("history", ["m1"], ctx as any),
+    /Related observational memory:[\s\S]*Branch A remains durable[\s\S]*\[dropped\]/,
+    "transcript recall appends related reflections and dropped observations",
+  );
+  assert.match(
+    om.recall("cccccccccccc", ctx as any) ?? "",
+    /No observation or reflection/,
+    "unknown memory IDs do not fall through to transcript search",
+  );
+  assert.equal(om.metrics(ctx as any).reflector.current, 0, "reflection batch restores progress");
   branch = [{ id: "m2", type: "message", message: { role: "user", content: "second branch", timestamp: 2 } }];
   handlers.get("session_tree")?.({}, ctx);
   assert.equal(om.metrics(ctx as any).activeObservations, 0, "tree navigation cannot retain old-branch OM state");

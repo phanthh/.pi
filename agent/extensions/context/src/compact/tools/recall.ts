@@ -6,6 +6,7 @@ import { formatRecallOutput, formatTouchedOutput } from "../core/format-recall.t
 import { getActiveLineageEntryIds } from "../core/lineage.ts";
 import { normalizeRecallScope, normalizeRecallMode } from "../core/recall-scope.ts";
 import { parseDrillDown, expandEntryFile } from "../core/drill-down.ts";
+import type { RenderedEntry } from "../core/render-entries.ts";
 
 const DEFAULT_RECENT = 25;
 const PAGE_SIZE = 5;
@@ -14,8 +15,26 @@ export const invalidExpandIndices = (requested: number[], available: Set<number>
   requested.filter((i) => !Number.isInteger(i) || !available.has(i));
 
 export type RecallResolver = (query: string, ctx: ExtensionContext) => string | undefined | Promise<string | undefined>;
+export type RecallAugmenter = (
+  output: string,
+  entryIds: string[],
+  ctx: ExtensionContext,
+) => string | Promise<string>;
 
-export const registerRecallTool = (pi: ExtensionAPI, resolve?: RecallResolver) => {
+export const augmentRecallOutput = async (
+  output: string,
+  entries: readonly Pick<RenderedEntry, "id">[],
+  ctx: ExtensionContext,
+  augment?: RecallAugmenter,
+): Promise<string> => augment
+  ? augment(output, entries.flatMap((entry) => entry.id ? [entry.id] : []), ctx)
+  : output;
+
+export const registerRecallTool = (
+  pi: ExtensionAPI,
+  resolve?: RecallResolver,
+  augment?: RecallAugmenter,
+) => {
   pi.registerTool({
     name: "recall",
     label: "Recall",
@@ -25,8 +44,9 @@ export const registerRecallTool = (pi: ExtensionAPI, resolve?: RecallResolver) =
       "have the context. Plain keywords work best; a regex pattern is also accepted. Results are paged " +
       "(page); pass expand with entry indices to read full untruncated content. Use mode:'touched' to " +
       "list files worked on in this session with their entry indices, and #N:path to drill into a file's " +
-      "content from an entry (#N:path:full for all lines). Note: apply_patch paths (inside the diff " +
-      "payload) and bash redirects do not appear in the touched index. Only the current session is " +
+      "content from an entry (#N:path:full for all lines). 12-character memory IDs recover observations, " +
+      "reflections, dropped status, and source evidence; transcript results include related memory. " +
+      "Note: apply_patch paths (inside the diff payload) and bash redirects do not appear in the touched index. Only the current session is " +
       "searchable — earlier sessions are not.",
     promptSnippet:
       "recall: recall earlier parts of this session before saying the context is gone. " +
@@ -135,7 +155,8 @@ export const registerRecallTool = (pi: ExtensionAPI, resolve?: RecallResolver) =
         }
 
         const expanded = requested.map((i) => byIndex.get(i)).filter((m): m is NonNullable<typeof m> => Boolean(m));
-        const output = (scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(expanded);
+        const base = (scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(expanded);
+        const output = await augmentRecallOutput(base, expanded, ctx, augment);
         return {
           content: [{ type: "text", text: output }],
           details: undefined,
@@ -190,14 +211,17 @@ export const registerRecallTool = (pi: ExtensionAPI, resolve?: RecallResolver) =
         const footer = page < totalPages
           ? `\n--- Use page:${page + 1}${scope === "all" ? " with scope:'all'" : ""} for more results ---`
           : "";
-        const output = formatRecallOutput(pageResults, params.query, header) + footer;
+        const base = formatRecallOutput(pageResults, params.query, header) + footer;
+        const output = await augmentRecallOutput(base, pageResults, ctx, augment);
         return {
           content: [{ type: "text", text: output }],
           details: undefined,
         };
       }
 
-      const output = (scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(msgs.slice(-DEFAULT_RECENT), params.query);
+      const recent = msgs.slice(-DEFAULT_RECENT);
+      const base = (scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(recent, params.query);
+      const output = await augmentRecallOutput(base, recent, ctx, augment);
       return {
         content: [{ type: "text", text: output }],
         details: undefined,

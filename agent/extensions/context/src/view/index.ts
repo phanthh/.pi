@@ -8,8 +8,8 @@ import {
 	buildSessionContext,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
-	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { effectiveMaxTokens, readCompactionMaxSettings } from "../compact/max-tokens.ts";
 
 import { ConfigStore, createDefaultConfigFile } from "./config.ts";
 import {
@@ -167,6 +167,11 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 			}
 			// Loaded only for the Usage view, the sole consumer of configured colors.
 			const loadedConfig = configStore.load();
+			const compactionSettings = readUsageCompactionSettings(ctx);
+			const modelContextWindow = ctx.model?.contextWindow;
+			const contextWindow = modelContextWindow === undefined
+				? undefined
+				: effectiveMaxTokens(modelContextWindow, compactionSettings?.overrideMaxTokens);
 			const current = buildNativeSnapshot({
 				systemPrompt: ctx.getSystemPrompt(),
 				options: ctx.getSystemPromptOptions(),
@@ -181,9 +186,11 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 					messages: probe.filterMessages(
 						buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages,
 					),
-					reported: toReportedUsage(ctx.getContextUsage()),
+					reported: toReportedUsage(ctx.getContextUsage(), contextWindow),
 					modelLabel: ctx.model?.id,
-					autoCompactReserveTokens: readAutoCompactReserveTokens(ctx),
+					autoCompactReserveTokens: compactionSettings?.enabled
+						? compactionSettings.reserveTokens
+						: undefined,
 				}),
 				memory: om.metrics(ctx),
 				degradedReason: initial.degradedReason,
@@ -195,20 +202,11 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 	});
 }
 
-/**
- * Read the auto-compaction reserve from the same merged settings files pi
- * uses, or undefined when auto-compaction is disabled. Read at view-open time
- * because `reserveTokens` has no runtime setter but `enabled` can change.
- */
-function readAutoCompactReserveTokens(context: ExtensionCommandContext): number | undefined {
+/** Read merged compaction settings at view-open time; malformed values degrade the map only. */
+function readUsageCompactionSettings(context: ExtensionCommandContext) {
 	try {
-		const settings = SettingsManager.create(context.cwd, undefined, {
-			projectTrusted: context.isProjectTrusted(),
-		});
-		if (!settings.getCompactionEnabled()) return undefined;
-		return settings.getCompactionReserveTokens();
+		return readCompactionMaxSettings(context.cwd, context.isProjectTrusted());
 	} catch {
-		// Unreadable settings degrade to a map without the buffer, not a failed view.
 		return undefined;
 	}
 }

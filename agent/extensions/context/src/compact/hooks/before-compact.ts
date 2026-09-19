@@ -7,6 +7,7 @@ import { loadSettings, type CompactorSettings } from "../core/settings.ts";
 import { calibrateCharsPerToken, estimateMessageContentChars, estimateMessageContentTokens, estimateTokensFromChars } from "../core/token-estimate.ts";
 import type { CompactionDetails } from "../details.ts";
 import type { CompactionReason } from "../types.ts";
+import type { RecallAugmenter, RecallResolver } from "../tools/recall.ts";
 
 export { COMPACT_MARKER } from "../core/compact-args.ts";
 
@@ -493,7 +494,9 @@ export interface CompactRegistrationOptions {
     ctx: ExtensionContext,
   ) => Partial<CompactionEnrichment> | undefined | void;
   /** Resolve host-specific exact recall keys before compact's normal search. */
-  resolveRecall?: (query: string, ctx: ExtensionContext) => string | undefined | Promise<string | undefined>;
+  resolveRecall?: RecallResolver;
+  /** Append host-specific context related to rendered session entry ids. */
+  augmentRecall?: RecallAugmenter;
 }
 
 export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegistrationOptions = {}) => {

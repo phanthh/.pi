@@ -71,12 +71,16 @@ export function collectPreviewEntries(category: UsageCategory): UsagePreviewEntr
 }
 
 /** Convert pi's nullable ContextUsage to the undefined-based model shape. */
-export function toReportedUsage(usage: ContextUsage | undefined): ReportedContextUsage | undefined {
-	if (usage === undefined) return undefined;
+export function toReportedUsage(
+	usage: ContextUsage | undefined,
+	contextWindow = usage?.contextWindow,
+): ReportedContextUsage | undefined {
+	if (usage === undefined || contextWindow === undefined) return undefined;
+	const tokens = usage.tokens ?? undefined;
 	return {
-		tokens: usage.tokens ?? undefined,
-		contextWindow: usage.contextWindow,
-		percent: usage.percent ?? undefined,
+		tokens,
+		contextWindow,
+		percent: tokens === undefined ? undefined : tokens / contextWindow * 100,
 	};
 }
 

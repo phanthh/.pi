@@ -4,13 +4,18 @@ import { searchEntriesDetailed } from "../core/search-entries.ts";
 import { formatRecallOutput } from "../core/format-recall.ts";
 import { getActiveLineageEntryIds } from "../core/lineage.ts";
 import { parseRecallScope } from "../core/recall-scope.ts";
+import { augmentRecallOutput, type RecallAugmenter, type RecallResolver } from "../tools/recall.ts";
 
 const PAGE_SIZE = 5;
 const DEFAULT_RECENT = 25;
 
-export const registerRecallCommand = (pi: ExtensionAPI) => {
+export const registerRecallCommand = (
+  pi: ExtensionAPI,
+  resolve?: RecallResolver,
+  augment?: RecallAugmenter,
+) => {
   pi.registerCommand("recall", {
-    description: "Recall earlier parts of this session. Plain keywords work best; add scope:all to reach edited or retried turns.",
+    description: "Recall session history and related observational memory. Use a 12-character memory ID for exact source evidence; add scope:all to reach edited or retried turns.",
     handler: async (args: string, ctx) => {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (!sessionFile) {
@@ -27,7 +32,8 @@ export const registerRecallCommand = (pi: ExtensionAPI) => {
         // No query: show recent
         const { rendered } = loadAllMessages(sessionFile, false, lineageEntryIds);
         const recent = rendered.slice(-DEFAULT_RECENT);
-        const output = (parsed.scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(recent);
+        const base = (parsed.scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(recent);
+        const output = await augmentRecallOutput(base, recent, ctx, augment);
         pi.sendMessage({ customType: "recall", content: output, display: true }, { triggerTurn: true });
         return;
       }
@@ -40,9 +46,18 @@ export const registerRecallCommand = (pi: ExtensionAPI) => {
       if (!query) {
         const { rendered } = loadAllMessages(sessionFile, false, lineageEntryIds);
         const recent = rendered.slice(-DEFAULT_RECENT);
-        const output = (parsed.scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(recent);
+        const base = (parsed.scope === "all" ? "Scope: all\n\n" : "") + formatRecallOutput(recent);
+        const output = await augmentRecallOutput(base, recent, ctx, augment);
         pi.sendMessage({ customType: "recall", content: output, display: true }, { triggerTurn: true });
         return;
+      }
+
+      if (resolve) {
+        const resolved = await resolve(query, ctx);
+        if (resolved !== undefined) {
+          pi.sendMessage({ customType: "recall", content: resolved, display: true }, { triggerTurn: true });
+          return;
+        }
       }
 
       const { rendered, rawMessages } = loadAllMessages(sessionFile, false, lineageEntryIds);
@@ -89,7 +104,8 @@ export const registerRecallCommand = (pi: ExtensionAPI) => {
       const footer = page < totalPages
         ? `\n--- /recall ${query}${scopeArg} page:${page + 1} ---`
         : "";
-      const output = formatRecallOutput(pageResults, query, header) + footer;
+      const base = formatRecallOutput(pageResults, query, header) + footer;
+      const output = await augmentRecallOutput(base, pageResults, ctx, augment);
       pi.sendMessage({ customType: "recall", content: output, display: true }, { triggerTurn: true });
     },
   });

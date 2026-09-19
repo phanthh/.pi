@@ -65,6 +65,21 @@ stage model → stage fallback models → shared model → session model (when e
 
 OM is always on while the `context` extension is loaded. Use cheap dedicated models and set `sessionFallback: false` for predictable cost. Unknown/invalid fields are ignored; numeric values are clamped. Legacy `memoryMaxTokens` remains accepted as an alias for `observationsPoolMaxTokens`; legacy `enabled` is ignored.
 
+## Compaction token cap
+
+Set `compaction.overrideMaxTokens` in Pi's merged `settings.json` to cap every model's effective context window for automatic compaction and `/context usage`:
+
+```json
+{
+  "compaction": {
+    "enabled": true,
+    "overrideMaxTokens": 250000
+  }
+}
+```
+
+The effective window is `min(model.contextWindow, overrideMaxTokens)`, so the setting never claims capacity a smaller model does not have. The extension applies that window to Pi's native context accounting, auto-compaction, summary budgets, and footer. Compaction starts after usage exceeds the effective window minus `compaction.reserveTokens`. Footer context displays the cap first and provider-advertised window in parentheses, for example `50.0%/250k (1.0M) (auto)`. Omit the setting to use Pi's model-specific window unchanged.
+
 ## `/context`
 
 - `/context` or `/context usage` — interactive context-window usage map plus Observer, Reflector, observation-pool, and Reflector-load gauges; ledger totals and active errors appear in the same dashboard.
@@ -74,6 +89,10 @@ OM is always on while the `context` extension is loaded. Use cheap dedicated mod
 - `/context config` — create context-view color overrides at `~/.pi/agent/extensions/pi-context-view.json`.
 
 Usage/injection views were folded from `pi-context-view` 0.5.2. They passively capture initial context and add no model-context instructions. Before the first real turn, opening a view may run one silent empty-message probe. Pi exposes no extension contribution API for built-in `/settings`, so OM uses `/context settings`.
+
+## Recall
+
+`recall` and `/recall` search active-lineage transcript history by default; use `scope:all` for other branches. Results automatically include observations and reflections sourced from displayed transcript entries, including dropped-observation markers. A 12-character bracketed or bare memory ID resolves an observation/reflection directly and returns its supporting source entries.
 
 ## `new_topic`
 

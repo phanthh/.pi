@@ -5,6 +5,8 @@ import { extractPath } from "./tool-args.ts";
 
 export interface RenderedEntry {
   index: number;
+  /** Session entry id; present for entries loaded from JSONL. */
+  id?: string;
   role: string;
   summary: string;
   files?: string[];
@@ -26,14 +28,15 @@ const extractFilesFromContent = (content: Message["content"]): string[] => {
     .filter((p): p is string => p !== null);
 };
 
-export const renderMessage = (msg: Message, index: number, full = false): RenderedEntry => {
+export const renderMessage = (msg: Message, index: number, full = false, id?: string): RenderedEntry => {
+  const identity = id === undefined ? {} : { id };
   if (msg.role === "user") {
-    return { index, role: "user", summary: full ? textOf(msg.content) : clip(textOf(msg.content), 300) };
+    return { index, ...identity, role: "user", summary: full ? textOf(msg.content) : clip(textOf(msg.content), 300) };
   }
   if (msg.role === "toolResult") {
     const text = full ? textOf(msg.content) : clip(textOf(msg.content), 200);
     return {
-      index, role: "tool_result",
+      index, ...identity, role: "tool_result",
       summary: `[${msg.toolName}] ${text}`,
     };
   }
@@ -42,13 +45,13 @@ export const renderMessage = (msg: Message, index: number, full = false): Render
     const cmd = (msg as any).command ?? "";
     const out = (msg as any).output ?? "";
     const text = full ? `$ ${cmd}\n${out}` : clip(`$ ${cmd}\n${out}`, 300);
-    return { index, role: "bash", summary: text };
+    return { index, ...identity, role: "bash", summary: text };
   }
   const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
   const tools = toolCalls(msg.content);
   const files = extractFilesFromContent(msg.content);
   const summary = tools ? `${tools}\n${text}` : text;
-  return { index, role: "assistant", summary, ...(files.length > 0 && { files }) };
+  return { index, ...identity, role: "assistant", summary, ...(files.length > 0 && { files }) };
 };
 
 
