@@ -9,6 +9,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | Directory | Surface | Purpose |
 |---|---|---|
 | `ask` | `ask` tool | Structured text, single-choice, and multi-choice questions |
+| [`anthropic-auth`](anthropic-auth/README.md) | Provider | Anthropic Pro/Max OAuth, Claude models, quota-aware routing, and cache controls |
 | [`bash-guard`](bash-guard/README.md) | Bash hook | Blocks catastrophic commands and optionally prompts for risky ones |
 | `codemode` | `code_exec` tool | Runs type-checked TypeScript orchestration in a QuickJS sandbox |
 | [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and topic cutovers |

@@ -1,0 +1,14 @@
+{
+	"name": "@pi-ext/anthropic-auth",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "bun test src/tests"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"@pi-ext/anthropic-auth-core": "workspace:*"
+	}
+}

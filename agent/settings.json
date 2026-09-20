@@ -3,8 +3,7 @@
   "theme": "tokyonight",
   "packages": [
     "npm:@sreetej510/pi-usage",
-    "npm:pi-mcp-adapter",
-    "npm:@cortexkit/pi-anthropic-auth"
+    "npm:pi-mcp-adapter"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,

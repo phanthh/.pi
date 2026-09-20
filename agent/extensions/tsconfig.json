@@ -1,6 +1,7 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
+		"lib": ["ES2023", "DOM", "DOM.Iterable"],
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true,
@@ -9,5 +10,6 @@
 		"skipLibCheck": true,
 		"types": ["node"]
 	},
-	"include": ["*/src/**/*.ts"]
+	"include": ["*/src/**/*.ts"],
+	"exclude": ["anthropic-auth*/src/tests/**/*.ts"]
 }

@@ -1,0 +1,193 @@
+import {
+  authorize,
+  CLAUDE_FABLE_MYTHOS_5_1_PRICING,
+  CLAUDE_FABLE_MYTHOS_5_CONTEXT_WINDOW,
+  CLAUDE_FABLE_MYTHOS_5_MAX_OUTPUT_TOKENS,
+  CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS,
+  CLAUDE_FABLE_MYTHOS_5_PRICING,
+  exchange,
+  isClaudeFableOrMythos51Model,
+  type MidConversationEffortTransition,
+  refreshClaudeOAuthToken,
+} from '@pi-ext/anthropic-auth-core'
+import type {
+  OAuthCredentials,
+  OAuthLoginCallbacks,
+} from '@earendil-works/pi-ai'
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+
+import { registerCommands } from './commands.ts'
+import {
+  collectPiEffortHistory,
+  deriveContextEntries,
+} from './effort-history.ts'
+import { streamCortexKitAnthropic } from './stream.ts'
+
+async function loginAnthropic(
+  callbacks: OAuthLoginCallbacks,
+): Promise<OAuthCredentials> {
+  const auth = await authorize('max')
+  callbacks.onAuth({ url: auth.url })
+  const callback = await callbacks.onPrompt({
+    message: 'Paste the Claude OAuth callback URL or code:',
+  })
+  const result = await exchange(
+    callback,
+    auth.verifier,
+    auth.redirectUri,
+    auth.state,
+  )
+  if (result.type !== 'success') {
+    throw new Error('Anthropic OAuth exchange failed')
+  }
+  return {
+    refresh: result.refresh,
+    access: result.access,
+    expires: result.expires,
+  }
+}
+
+function textImageInput(): Array<'text' | 'image'> {
+  return ['text', 'image']
+}
+
+async function refreshAnthropicToken(
+  credentials: OAuthCredentials,
+): Promise<OAuthCredentials> {
+  const refreshed = await refreshClaudeOAuthToken({
+    refreshToken: credentials.refresh,
+  })
+
+  return {
+    refresh: refreshed.refresh,
+    access: refreshed.access,
+    expires: refreshed.expires,
+  }
+}
+
+export default function cortexKitPiAnthropicAuth(pi: ExtensionAPI) {
+  registerCommands(pi)
+  const effortHistoryBySession = new Map<
+    string,
+    MidConversationEffortTransition[]
+  >()
+  pi.on('turn_start', async (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId()
+    if (!sessionId) return
+    // This hook only adds mid-conversation effort markers to Fable/Mythos 5.1
+    // requests. A host whose session entries do not match what this reads must
+    // cost the session its transitions and nothing else: the handler runs
+    // before every turn, and an exception here surfaced as a per-turn extension
+    // error while collecting no effort history at all (issue #200).
+    //
+    // The catch stays quiet: `ExtensionAPI` carries no log surface on either
+    // host, and writing to stdout from a per-turn hook corrupts the host's
+    // rendering — which is the same per-turn noise this fix removes. The
+    // degraded state is observable in the request: no effort markers.
+    let transitions: MidConversationEffortTransition[]
+    try {
+      const branch = ctx.sessionManager.getBranch()
+      transitions = collectPiEffortHistory(deriveContextEntries(branch), branch)
+    } catch {
+      transitions = []
+    }
+    effortHistoryBySession.delete(sessionId)
+    effortHistoryBySession.set(sessionId, transitions)
+    while (effortHistoryBySession.size > 128) {
+      const oldest = effortHistoryBySession.keys().next().value
+      if (oldest) effortHistoryBySession.delete(oldest)
+      else break
+    }
+  })
+  pi.on('session_shutdown', async (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId()
+    if (sessionId) effortHistoryBySession.delete(sessionId)
+  })
+
+  pi.registerProvider('anthropic', {
+    name: 'Anthropic OAuth',
+    baseUrl: 'https://api.anthropic.com',
+    api: 'cortexkit-anthropic-messages',
+    models: [
+      ...Object.values(CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS).map((model) => {
+        const pricing = isClaudeFableOrMythos51Model(model.id)
+          ? CLAUDE_FABLE_MYTHOS_5_1_PRICING
+          : CLAUDE_FABLE_MYTHOS_5_PRICING
+        return {
+          id: model.id,
+          name: model.name,
+          reasoning: true,
+          input: textImageInput(),
+          cost: {
+            input: pricing.input,
+            output: pricing.output,
+            cacheRead: pricing.cacheRead,
+            cacheWrite: pricing.cacheWrite5m,
+          },
+          contextWindow: CLAUDE_FABLE_MYTHOS_5_CONTEXT_WINDOW,
+          maxTokens: CLAUDE_FABLE_MYTHOS_5_MAX_OUTPUT_TOKENS,
+        }
+      }),
+      {
+        id: 'claude-opus-5',
+        name: 'Claude Opus 5',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: 'claude-opus-4-8',
+        name: 'Claude Opus 4.8',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: 'claude-opus-4-5',
+        name: 'Claude Opus 4.5',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      },
+      {
+        id: 'claude-sonnet-4-5',
+        name: 'Claude Sonnet 4.5',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      },
+      {
+        id: 'claude-sonnet-5',
+        name: 'Claude Sonnet 5',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+    ],
+    oauth: {
+      name: 'Anthropic Claude Pro/Max',
+      login: loginAnthropic,
+      refreshToken: refreshAnthropicToken,
+      getApiKey: (credentials) => credentials.access,
+    },
+    streamSimple: (model, context, options) =>
+      streamCortexKitAnthropic(
+        model,
+        context,
+        options,
+        options?.sessionId
+          ? effortHistoryBySession.get(options.sessionId)
+          : undefined,
+      ),
+  })
+}

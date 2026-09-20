@@ -26,6 +26,8 @@ extensions/
 | Dir | Surface | Notes |
 |---|---|---|
 | `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
+| `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls |
+| `anthropic-auth-core` | library | auth, account, quota, cache, relay, and routing logic shared by `anthropic-auth` |
 | `bash-guard` | hook on `bash` | subagents: headless hard-block; main session: off by default + irreversible-op floor. `/bash-guard` toggles |
 | `codemode` | `code_exec` tool | type-checked TS program run in QuickJS sandbox; calls pi tools from inside |
 | `context` | `/context`, `/compact`, `/recall`; `recall` + `new_topic` tools | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), topic cutovers. Has its own `README.md` |

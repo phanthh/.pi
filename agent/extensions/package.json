@@ -3,7 +3,8 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check": "tsc --noEmit"
+		"check": "tsc --noEmit",
+		"test:anthropic-auth": "pnpm --filter @pi-ext/anthropic-auth-core test && pnpm --filter @pi-ext/anthropic-auth test"
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "catalog:",
