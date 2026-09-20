@@ -6,6 +6,7 @@ import {
 	Text,
 	matchesKey,
 	truncateToWidth,
+	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -16,516 +17,616 @@ interface AskOption {
 	description?: string;
 }
 
-interface DisplayOption extends AskOption {
-	id: string;
-	index?: number;
-	isOther?: boolean;
-	isSubmit?: boolean;
+interface PromptQuestion {
+	kind: "prompt";
+	question: string;
+	details?: string;
+	options: AskOption[];
+	multiSelect: boolean;
+	required: boolean;
 }
 
-interface TextAnswer {
-	type: "text";
-	label: string;
-	value: string;
+interface QuizQuestion {
+	kind: "quiz";
+	question: string;
+	details?: string;
+	options: AskOption[];
+	multiSelect: boolean;
+	correctValues: string[];
+	explanation: string;
 }
 
-interface OptionAnswer {
-	type: "option";
-	label: string;
-	value: string;
-	index: number;
-}
-
-interface OtherAnswer {
-	type: "other";
-	label: string;
-	value: string;
-}
-
-type AskAnswer = TextAnswer | OptionAnswer | OtherAnswer;
+type Question = PromptQuestion | QuizQuestion;
 type AskStatus = "answered" | "cancelled" | "unavailable";
-type AskMode = "text" | "single-select" | "multi-select";
+type PromptMode = "text" | "single-select" | "multi-select";
+
+interface PromptResponse {
+	kind: "prompt";
+	question: string;
+	mode: PromptMode;
+	required: boolean;
+	answered: boolean;
+	selectedValues: string[];
+	selectedLabels: string[];
+	text?: string;
+	other?: string;
+}
+
+interface QuizResponse {
+	kind: "quiz";
+	question: string;
+	multiSelect: boolean;
+	selectedValues: string[];
+	selectedLabels: string[];
+	correctValues: string[];
+	correct: boolean;
+	explanation: string;
+	dontKnow: boolean;
+}
+
+type AskResponse = PromptResponse | QuizResponse;
 
 interface AskResultDetails {
 	status: AskStatus;
-	question: string;
-	context?: string;
-	mode: AskMode;
-	answers: AskAnswer[];
+	responses: AskResponse[];
+	score?: { correct: number; total: number };
 	message?: string;
+}
+
+interface QuestionState {
+	focus: number;
+	selected: Set<number>;
+	dontKnow: boolean;
+	text: string;
+	other: string;
+	editingOther: boolean;
 }
 
 const OptionSchema = Type.Object({
 	label: Type.String({
 		description:
-			'Display label for the option. If you recommend an option, place it first and append "(Recommended)" to the label.',
+			'Display label. Put a recommended option first and append "(Recommended)" to its label.',
 	}),
 	value: Type.Optional(
-		Type.String({
-			description: "Optional machine-readable value returned for the option. Defaults to the label.",
-		}),
+		Type.String({ description: "Machine-readable value. Defaults to label; quiz answer keys refer to this value." }),
 	),
-	description: Type.Optional(Type.String({ description: "Optional extra detail shown below the option." })),
+	description: Type.Optional(Type.String({ description: "Optional detail shown below option." })),
 });
 
-const AskParams = Type.Object({
-	question: Type.String({
-		description: "The single question to ask the user. Ask exactly one question per tool call.",
-	}),
-	details: Type.Optional(
-		Type.String({
-			description: "Optional extra context or instructions shown under the question.",
-		}),
-	),
+const CommonQuestionProperties = {
+	question: Type.String({ description: "Question shown to user." }),
+	details: Type.Optional(Type.String({ description: "Optional context or instructions shown below question." })),
+};
+
+const PromptQuestionSchema = Type.Object({
+	kind: Type.Literal("prompt"),
+	...CommonQuestionProperties,
 	options: Type.Optional(
 		Type.Array(OptionSchema, {
 			description:
-				"Optional multiple-choice options. Omit or pass an empty array for free-form text input. Users will always be able to choose Other and type a custom answer when options are provided.",
+				"Choice options. Omit or pass [] for free text. Choice prompts automatically include Other.",
 		}),
 	),
-	multiSelect: Type.Optional(
-		Type.Boolean({
-			description: "Set to true to allow multiple answers to be selected for a question.",
-		}),
-	),
+	multiSelect: Type.Optional(Type.Boolean({ description: "Allow multiple choices. Only applies when options exist." })),
+	required: Type.Optional(Type.Boolean({ description: "Block batch submission until answered. Defaults to true." })),
 });
 
-function normalizeOptions(options: Array<{ label: string; value?: string; description?: string }> | undefined): AskOption[] {
-	return (options || [])
-		.map((option) => ({
-			label: option.label.trim(),
-			value: option.value?.trim() || option.label.trim(),
-			description: option.description?.trim() || undefined,
-		}))
-		.filter((option) => option.label.length > 0);
+const QuizQuestionSchema = Type.Object({
+	kind: Type.Literal("quiz"),
+	...CommonQuestionProperties,
+	options: Type.Array(OptionSchema, {
+		minItems: 2,
+		description: "At least two balanced answer choices. Display order is always shuffled.",
+	}),
+	multiSelect: Type.Optional(Type.Boolean({ description: "Allow multiple answers." })),
+	correctAnswer: Type.Union([Type.String(), Type.Array(Type.String())], {
+		description: "Correct option value, or values for a multi-select quiz. Keys are option values, not labels.",
+	}),
+	explanation: Type.String({ description: "Required explanation shown only after submission." }),
+});
+
+const AskParams = Type.Object({
+	questions: Type.Array(Type.Union([PromptQuestionSchema, QuizQuestionSchema]), {
+		minItems: 1,
+		maxItems: 8,
+		description: "One to eight independent prompt or quiz questions shown in one tabbed modal.",
+	}),
+});
+
+function shuffled<T>(values: T[]): T[] {
+	const result = [...values];
+	for (let i = result.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[result[i], result[j]] = [result[j], result[i]];
+	}
+	return result;
 }
 
-function getOtherLabel(options: AskOption[]): string {
-	return options.some((option) => option.label.toLowerCase() === "other") ? "Other (custom)" : "Other";
+function normalizeOption(raw: unknown, location: string): { option?: AskOption; error?: string } {
+	if (!raw || typeof raw !== "object") return { error: `${location} must be an object` };
+	const value = raw as Record<string, unknown>;
+	if (typeof value.label !== "string" || !value.label.trim()) {
+		return { error: `${location}.label must be nonempty` };
+	}
+	if (value.value !== undefined && (typeof value.value !== "string" || !value.value.trim())) {
+		return { error: `${location}.value must be nonempty when provided` };
+	}
+	if (value.description !== undefined && typeof value.description !== "string") {
+		return { error: `${location}.description must be a string` };
+	}
+	return {
+		option: {
+			label: value.label.trim(),
+			value: typeof value.value === "string" ? value.value.trim() : value.label.trim(),
+			description:
+				typeof value.description === "string" && value.description.trim() ? value.description.trim() : undefined,
+		},
+	};
+}
+
+/** Runtime validation protects custom providers which do not enforce the TypeBox schema. */
+export function normalizeQuestions(raw: unknown): { questions?: Question[]; error?: string } {
+	if (!Array.isArray(raw) || raw.length < 1 || raw.length > 8) {
+		return { error: "questions must contain between 1 and 8 items" };
+	}
+
+	const questions: Question[] = [];
+	for (let index = 0; index < raw.length; index++) {
+		const location = `questions[${index}]`;
+		const item = raw[index];
+		if (!item || typeof item !== "object") return { error: `${location} must be an object` };
+		const value = item as Record<string, unknown>;
+		if (value.kind !== "prompt" && value.kind !== "quiz") {
+			return { error: `${location}.kind must be prompt or quiz` };
+		}
+		if (typeof value.question !== "string" || !value.question.trim()) {
+			return { error: `${location}.question must be nonempty` };
+		}
+		if (value.details !== undefined && typeof value.details !== "string") {
+			return { error: `${location}.details must be a string` };
+		}
+		if (value.options !== undefined && !Array.isArray(value.options)) {
+			return { error: `${location}.options must be an array` };
+		}
+		if (value.multiSelect !== undefined && typeof value.multiSelect !== "boolean") {
+			return { error: `${location}.multiSelect must be a boolean` };
+		}
+		if (value.kind === "prompt" && value.required !== undefined && typeof value.required !== "boolean") {
+			return { error: `${location}.required must be a boolean` };
+		}
+
+		const options: AskOption[] = [];
+		for (let optionIndex = 0; optionIndex < ((value.options as unknown[] | undefined)?.length ?? 0); optionIndex++) {
+			const normalized = normalizeOption((value.options as unknown[])[optionIndex], `${location}.options[${optionIndex}]`);
+			if (normalized.error) return { error: normalized.error };
+			options.push(normalized.option!);
+		}
+		const duplicate = options.find((option, optionIndex) =>
+			options.slice(0, optionIndex).some((previous) => previous.value === option.value),
+		);
+		if (duplicate) return { error: `${location}.options contains duplicate value ${JSON.stringify(duplicate.value)}` };
+
+		const common = {
+			question: value.question.trim(),
+			details: typeof value.details === "string" && value.details.trim() ? value.details.trim() : undefined,
+			options,
+			multiSelect: value.multiSelect === true,
+		};
+		if (value.kind === "prompt") {
+			questions.push({ kind: "prompt", ...common, required: value.required !== false });
+			continue;
+		}
+
+		if (options.length < 2) return { error: `${location}.options must contain at least 2 options` };
+		if (typeof value.explanation !== "string" || !value.explanation.trim()) {
+			return { error: `${location}.explanation must be nonempty` };
+		}
+		if (typeof value.correctAnswer !== "string" && !Array.isArray(value.correctAnswer)) {
+			return { error: `${location}.correctAnswer must be a string or string array` };
+		}
+		const rawAnswers = Array.isArray(value.correctAnswer) ? value.correctAnswer : [value.correctAnswer];
+		if (rawAnswers.some((answer) => typeof answer !== "string" || !answer.trim())) {
+			return { error: `${location}.correctAnswer values must be nonempty strings` };
+		}
+		const correctValues = rawAnswers.map((answer) => (answer as string).trim());
+		if (new Set(correctValues).size !== correctValues.length) {
+			return { error: `${location}.correctAnswer contains duplicate values` };
+		}
+		if (common.multiSelect ? correctValues.length < 1 : correctValues.length !== 1) {
+			return {
+				error: common.multiSelect
+					? `${location}.correctAnswer must contain at least one value`
+					: `${location}.correctAnswer must contain exactly one value for a single-select quiz`,
+			};
+		}
+		const unknownAnswer = correctValues.find((answer) => !options.some((option) => option.value === answer));
+		if (unknownAnswer !== undefined) {
+			return { error: `${location}.correctAnswer value ${JSON.stringify(unknownAnswer)} does not match an option value` };
+		}
+		questions.push({
+			kind: "quiz",
+			...common,
+			options: shuffled(options),
+			correctValues,
+			explanation: value.explanation.trim(),
+		});
+	}
+	return { questions };
+}
+
+export function exactSetEqual(left: string[], right: string[]): boolean {
+	return left.length === right.length && new Set(left).size === left.length && left.every((value) => right.includes(value));
 }
 
 function createEditorTheme(theme: any): EditorTheme {
 	return {
-		borderColor: (s) => theme.fg("accent", s),
+		borderColor: (text) => theme.fg("accent", text),
 		selectList: {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("muted", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("warning", t),
+			selectedPrefix: (text) => theme.fg("accent", text),
+			selectedText: (text) => theme.fg("accent", text),
+			description: (text) => theme.fg("muted", text),
+			scrollInfo: (text) => theme.fg("dim", text),
+			noMatch: (text) => theme.fg("warning", text),
 		},
 	};
 }
 
 function addWrapped(lines: string[], text: string, width: number, indent = ""): void {
-	const contentWidth = Math.max(1, width - indent.length);
+	const contentWidth = Math.max(1, width - visibleWidth(indent));
 	for (const line of wrapTextWithAnsi(text, contentWidth)) {
 		lines.push(truncateToWidth(`${indent}${line}`, width));
 	}
 }
 
-function formatAnswerForModel(answer: AskAnswer): string {
-	switch (answer.type) {
-		case "text":
-			return answer.label;
-		case "other":
-			return `Other: ${answer.label}`;
-		case "option":
-			return `${answer.index}. ${answer.label}`;
-	}
+function promptMode(question: PromptQuestion): PromptMode {
+	if (question.options.length === 0) return "text";
+	return question.multiSelect ? "multi-select" : "single-select";
 }
 
-function answerSortRank(answer: AskAnswer): number {
-	switch (answer.type) {
-		case "option":
-			return answer.index;
-		case "other":
-			return Number.MAX_SAFE_INTEGER - 1;
-		case "text":
-			return Number.MAX_SAFE_INTEGER;
-	}
+function isAnswered(question: Question, state: QuestionState): boolean {
+	if (question.kind === "quiz") return state.dontKnow || state.selected.size > 0;
+	if (question.options.length === 0) return state.text.trim().length > 0;
+	return state.selected.size > 0 || state.other.trim().length > 0;
 }
 
-function sortAnswers(answers: AskAnswer[]): AskAnswer[] {
-	return [...answers].sort((a, b) => answerSortRank(a) - answerSortRank(b));
+function canSubmit(questions: Question[], states: QuestionState[]): boolean {
+	return questions.every((question, index) =>
+		question.kind === "quiz" || question.required ? isAnswered(question, states[index]) : true,
+	);
 }
 
-function buildStructuredResult(
-	status: AskStatus,
-	question: string,
-	mode: AskMode,
-	answers: AskAnswer[],
-	context?: string,
-	message?: string,
-) {
-	return {
-		status,
-		question,
-		context,
-		mode,
-		answers,
-		message,
-	} as AskResultDetails;
-}
-
-function cancelledResult(question: string, mode: AskMode, context?: string) {
-	const message = "User cancelled the question";
-	return {
-		content: [{ type: "text" as const, text: message }],
-		details: buildStructuredResult("cancelled", question, mode, [], context, message),
-	};
-}
-
-function unavailableResult(question: string, mode: AskMode, message: string, context?: string) {
-	return {
-		content: [{ type: "text" as const, text: message }],
-		details: buildStructuredResult("unavailable", question, mode, [], context, message),
-	};
-}
-
-function buildResult(question: string, context: string | undefined, mode: AskMode, answers: AskAnswer[]) {
-	let text: string;
-	if (mode === "text") {
-		const answer = answers[0];
-		text = answer.label.trim().length > 0 ? `User answered: ${answer.label}` : "User submitted an empty response";
-	} else if (mode === "single-select") {
-		text = `User selected: ${formatAnswerForModel(answers[0])}`;
-	} else {
-		text = `User selected:\n${answers.map((answer) => `- ${formatAnswerForModel(answer)}`).join("\n")}`;
-	}
-
-	return {
-		content: [{ type: "text" as const, text }],
-		details: buildStructuredResult("answered", question, mode, answers, context),
-	};
-}
-
-async function askSingleChoice(
-	ctx: ExtensionContext,
-	question: string,
-	context: string | undefined,
-	options: AskOption[],
-): Promise<AskAnswer | null> {
-	const otherLabel = getOtherLabel(options);
-	const allOptions: DisplayOption[] = [
-		...options.map((option, index) => ({ ...option, id: `option:${index}`, index: index + 1 })),
-		{ id: "other", label: otherLabel, value: "__other__", isOther: true },
-	];
-
-	return ctx.ui.custom<AskAnswer | null>((tui: any, theme: any, _kb: any, done: (result: AskAnswer | null) => void) => {
-		let optionIndex = 0;
-		let editMode = false;
-		let cachedLines: string[] | undefined;
-		let cachedWidth = -1;
-		const editor = new Editor(tui, createEditorTheme(theme));
-
-		editor.onSubmit = (value) => {
-			const trimmed = value.trim();
-			if (!trimmed) return;
-			done({ type: "other", label: trimmed, value: trimmed });
-		};
-
-		function refresh() {
-			cachedLines = undefined;
-			tui.requestRender();
-		}
-
-		function handleInput(data: string) {
-			if (editMode) {
-				if (matchesKey(data, Key.escape)) {
-					editMode = false;
-					editor.setText("");
-					refresh();
-					return;
-				}
-				editor.handleInput(data);
-				refresh();
-				return;
-			}
-
-			if (matchesKey(data, Key.up)) {
-				optionIndex = Math.max(0, optionIndex - 1);
-				refresh();
-				return;
-			}
-			if (matchesKey(data, Key.down)) {
-				optionIndex = Math.min(allOptions.length - 1, optionIndex + 1);
-				refresh();
-				return;
-			}
-			if (matchesKey(data, Key.enter)) {
-				const selected = allOptions[optionIndex];
-				if (selected.isOther) {
-					editMode = true;
-					editor.setText("");
-					refresh();
-					return;
-				}
-				done({
-					type: "option",
-					label: selected.label,
-					value: selected.value,
-					index: selected.index!,
-				});
-				return;
-			}
-			if (matchesKey(data, Key.escape)) {
-				done(null);
-			}
-		}
-
-		function render(width: number): string[] {
-			// The cache MUST be keyed on width: pi-tui calls requestRender() but NOT
-			// invalidate() on terminal resize, so render() can be re-entered with a
-			// new width. Returning stale wider lines trips the TUI width guard and
-			// crashes the process.
-			if (cachedLines && cachedWidth === width) return cachedLines;
-
-			const lines: string[] = [];
-			const add = (text: string) => lines.push(truncateToWidth(text, width));
-
-			add(theme.fg("accent", "─".repeat(width)));
-			addWrapped(lines, theme.fg("text", ` ${question}`), width);
-			if (context) {
-				lines.push("");
-				addWrapped(lines, theme.fg("muted", ` ${context}`), width);
-			}
-			lines.push("");
-
-			for (let i = 0; i < allOptions.length; i++) {
-				const option = allOptions[i];
-				const selected = i === optionIndex;
-				const prefix = selected ? theme.fg("accent", "> ") : "  ";
-				const label = option.isOther ? option.label : `${option.index}. ${option.label}`;
-				const styled = selected ? theme.fg("accent", label) : theme.fg("text", label);
-				add(`${prefix}${styled}`);
-				if (option.description) {
-					addWrapped(lines, theme.fg("muted", option.description), width, "     ");
-				}
-			}
-
-			if (editMode) {
-				lines.push("");
-				add(theme.fg("muted", " Write your custom answer:"));
-				for (const line of editor.render(Math.max(1, width - 2))) {
-					add(` ${line}`);
-				}
-				lines.push("");
-				add(theme.fg("dim", " Enter to submit • Esc to go back"));
-			} else {
-				lines.push("");
-				add(theme.fg("dim", " ↑↓ navigate • Enter select • Esc cancel"));
-			}
-
-			add(theme.fg("accent", "─".repeat(width)));
-			cachedLines = lines;
-			cachedWidth = width;
-			return lines;
-		}
-
+function responseFor(question: Question, state: QuestionState): AskResponse {
+	const selectedOptions = [...state.selected]
+		.sort((a, b) => a - b)
+		.map((index) => question.options[index])
+		.filter((option): option is AskOption => option !== undefined);
+	const selectedValues = selectedOptions.map((option) => option.value);
+	const selectedLabels = selectedOptions.map((option) => option.label);
+	if (question.kind === "quiz") {
 		return {
-			render,
-			invalidate: () => {
-				cachedLines = undefined;
-			},
-			handleInput,
+			kind: "quiz",
+			question: question.question,
+			multiSelect: question.multiSelect,
+			selectedValues,
+			selectedLabels,
+			correctValues: question.correctValues,
+			correct: !state.dontKnow && exactSetEqual(selectedValues, question.correctValues),
+			explanation: question.explanation,
+			dontKnow: state.dontKnow,
 		};
-	});
+	}
+	return {
+		kind: "prompt",
+		question: question.question,
+		mode: promptMode(question),
+		required: question.required,
+		answered: isAnswered(question, state),
+		selectedValues,
+		selectedLabels,
+		...(question.options.length === 0 && state.text.trim() ? { text: state.text.trim() } : {}),
+		...(state.other.trim() ? { other: state.other.trim() } : {}),
+	};
 }
 
-async function askMultiChoice(
-	ctx: ExtensionContext,
-	question: string,
-	context: string | undefined,
-	options: AskOption[],
-): Promise<AskAnswer[] | null> {
-	const otherLabel = getOtherLabel(options);
-	const choiceItems: DisplayOption[] = options.map((option, index) => ({
-		...option,
-		id: `option:${index}`,
-		index: index + 1,
-	}));
-	const submitItem: DisplayOption = { id: "submit", label: "Submit", value: "__submit__", isSubmit: true };
-	const allItems: DisplayOption[] = [
-		...choiceItems,
-		{ id: "other", label: otherLabel, value: "__other__", isOther: true },
-		submitItem,
-	];
+function resultText(responses: AskResponse[], score: { correct: number; total: number }): string {
+	const lines = responses.map((response, index) => {
+		const prefix = `Q${index + 1}: ${response.question}`;
+		if (response.kind === "prompt") {
+			if (!response.answered) return `${prefix}\nAnswer: (unanswered)`;
+			if (response.mode === "text") return `${prefix}\nAnswer: ${response.text}`;
+			const values = [...response.selectedValues, ...(response.other ? [`Other: ${response.other}`] : [])];
+			return `${prefix}\nAnswer values: ${values.join(", ")}`;
+		}
+		const selected = response.dontKnow ? "I don't know" : response.selectedValues.join(", ");
+		return `${prefix}\nSelected values: ${selected}\nCorrect values: ${response.correctValues.join(", ")}\nCorrect: ${response.correct ? "yes" : "no"}\nExplanation: ${response.explanation}`;
+	});
+	if (score.total > 0) lines.push(`Quiz score: ${score.correct}/${score.total}`);
+	return lines.join("\n\n");
+}
 
-	return ctx.ui.custom<AskAnswer[] | null>((tui: any, theme: any, _kb: any, done: (result: AskAnswer[] | null) => void) => {
-		let optionIndex = 0;
-		let editMode = false;
+function unavailableResult(message: string) {
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { status: "unavailable", responses: [], message } as AskResultDetails,
+	};
+}
+
+function cancelledResult() {
+	const message = "User cancelled the question batch";
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { status: "cancelled", responses: [], message } as AskResultDetails,
+	};
+}
+
+async function showQuestions(
+	ctx: ExtensionContext,
+	questions: Question[],
+	signal?: AbortSignal,
+): Promise<QuestionState[] | null> {
+	return ctx.ui.custom<QuestionState[] | null>((tui: any, theme: any, _kb: any, done: (result: QuestionState[] | null) => void) => {
+		let finished = false;
+		const finish = (result: QuestionState[] | null) => {
+			if (finished) return;
+			finished = true;
+			signal?.removeEventListener("abort", abort);
+			done(result);
+		};
+		const abort = () => finish(null);
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
+
+		let currentTab = 0;
 		let cachedLines: string[] | undefined;
 		let cachedWidth = -1;
-		const selected = new Map<string, AskAnswer>();
-		const editor = new Editor(tui, createEditorTheme(theme));
-
-		editor.onSubmit = (value) => {
-			const trimmed = value.trim();
-			if (!trimmed) return;
-			selected.set("other", { type: "other", label: trimmed, value: trimmed });
-			editMode = false;
-			refresh();
-		};
+		let submitWarning = false;
+		const states: QuestionState[] = questions.map(() => ({
+			focus: 0,
+			selected: new Set<number>(),
+			dontKnow: false,
+			text: "",
+			other: "",
+			editingOther: false,
+		}));
+		const editors = questions.map(() => new Editor(tui, createEditorTheme(theme)));
 
 		function refresh() {
 			cachedLines = undefined;
 			tui.requestRender();
 		}
 
-		function toggleOption(item: DisplayOption) {
-			if (selected.has(item.id)) {
-				selected.delete(item.id);
-			} else {
-				selected.set(item.id, {
-					type: "option",
-					label: item.label,
-					value: item.value,
-					index: item.index!,
-				});
-			}
+		function advance() {
+			currentTab = Math.min(questions.length, currentTab + 1);
+			submitWarning = false;
+			refresh();
+		}
+
+		for (let index = 0; index < questions.length; index++) {
+			editors[index].onSubmit = (value) => {
+				const question = questions[index];
+				const state = states[index];
+				const trimmed = value.trim();
+				if (question.kind === "prompt" && question.options.length === 0) {
+					state.text = trimmed;
+					if (trimmed) advance();
+					else refresh();
+					return;
+				}
+				if (!trimmed) {
+					state.other = "";
+					state.editingOther = false;
+					refresh();
+					return;
+				}
+				state.other = trimmed;
+				state.editingOther = false;
+				if (!question.multiSelect) state.selected.clear();
+				advance();
+			};
+		}
+
+		function moveTab(delta: number) {
+			currentTab = (currentTab + delta + questions.length + 1) % (questions.length + 1);
+			submitWarning = false;
 			refresh();
 		}
 
 		function handleInput(data: string) {
-			if (editMode) {
-				if (matchesKey(data, Key.escape)) {
-					editMode = false;
-					editor.setText(selected.get("other")?.label || "");
-					refresh();
-					return;
+			if (matchesKey(data, Key.escape)) {
+				finish(null);
+				return;
+			}
+			if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+				moveTab(1);
+				return;
+			}
+			if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
+				moveTab(-1);
+				return;
+			}
+
+			if (currentTab === questions.length) {
+				if (matchesKey(data, Key.enter)) {
+					if (canSubmit(questions, states)) finish(states);
+					else {
+						submitWarning = true;
+						refresh();
+					}
 				}
+				return;
+			}
+
+			const question = questions[currentTab];
+			const state = states[currentTab];
+			const editor = editors[currentTab];
+			if ((question.kind === "prompt" && question.options.length === 0) || state.editingOther) {
 				editor.handleInput(data);
 				refresh();
 				return;
 			}
 
+			const itemCount = question.options.length + 1;
 			if (matchesKey(data, Key.up)) {
-				optionIndex = Math.max(0, optionIndex - 1);
+				state.focus = Math.max(0, state.focus - 1);
 				refresh();
 				return;
 			}
 			if (matchesKey(data, Key.down)) {
-				optionIndex = Math.min(allItems.length - 1, optionIndex + 1);
+				state.focus = Math.min(itemCount - 1, state.focus + 1);
 				refresh();
 				return;
 			}
 
-			const current = allItems[optionIndex];
-			if (matchesKey(data, Key.space)) {
-				if (current.isSubmit) return;
-				if (current.isOther) {
-					if (selected.has("other")) {
-						selected.delete("other");
-						refresh();
-					} else {
-						editMode = true;
+			const isExtra = state.focus === question.options.length;
+			const toggle = () => {
+				if (question.kind === "quiz" && isExtra) {
+					state.selected.clear();
+					state.dontKnow = true;
+				} else if (question.kind === "prompt" && isExtra) {
+					if (question.multiSelect && state.other) {
+						state.other = "";
+						state.editingOther = false;
 						editor.setText("");
-						refresh();
+					} else {
+						state.editingOther = true;
+						editor.setText(state.other);
 					}
-					return;
+				} else if (question.multiSelect) {
+					state.dontKnow = false;
+					if (state.selected.has(state.focus)) state.selected.delete(state.focus);
+					else state.selected.add(state.focus);
+				} else {
+					state.dontKnow = false;
+					state.other = "";
+					state.selected.clear();
+					state.selected.add(state.focus);
 				}
-				toggleOption(current);
+				refresh();
+			};
+
+			if (matchesKey(data, Key.space) && question.multiSelect) {
+				toggle();
 				return;
 			}
-
 			if (matchesKey(data, Key.enter)) {
-				if (current.isSubmit) {
-					if (selected.size > 0) {
-						done(sortAnswers(Array.from(selected.values())));
-					}
-					return;
-				}
-				if (current.isOther) {
-					editMode = true;
-					editor.setText(selected.get("other")?.label || "");
-					refresh();
-					return;
-				}
-				toggleOption(current);
-				return;
-			}
-
-			if (matchesKey(data, Key.escape)) {
-				done(null);
+				toggle();
+				if (!question.multiSelect && !state.editingOther) advance();
 			}
 		}
 
 		function render(width: number): string[] {
-			// The cache MUST be keyed on width: pi-tui calls requestRender() but NOT
-			// invalidate() on terminal resize, so render() can be re-entered with a
-			// new width. Returning stale wider lines trips the TUI width guard and
-			// crashes the process.
-			if (cachedLines && cachedWidth === width) return cachedLines;
-
+			const renderWidth = Math.max(1, width);
+			if (cachedLines && cachedWidth === renderWidth) return cachedLines;
 			const lines: string[] = [];
-			const add = (text: string) => lines.push(truncateToWidth(text, width));
+			const add = (text: string) => lines.push(truncateToWidth(text, renderWidth));
 
-			add(theme.fg("accent", "─".repeat(width)));
-			addWrapped(lines, theme.fg("text", ` ${question}`), width);
-			if (context) {
-				lines.push("");
-				addWrapped(lines, theme.fg("muted", ` ${context}`), width);
-			}
+			add(theme.fg("accent", "─".repeat(renderWidth)));
+			const tabs = questions.map((question, index) => {
+				const complete = isAnswered(question, states[index]);
+				const label = `${complete ? "■" : "□"} Q${index + 1}`;
+				return index === currentTab
+					? theme.bg("selectedBg", theme.fg("text", ` ${label} `))
+					: theme.fg(complete ? "success" : "muted", ` ${label} `);
+			});
+			const submitLabel = " ✓ Submit ";
+			tabs.push(
+				currentTab === questions.length
+					? theme.bg("selectedBg", theme.fg("text", submitLabel))
+					: theme.fg(canSubmit(questions, states) ? "success" : "dim", submitLabel),
+			);
+			addWrapped(lines, tabs.join(" "), renderWidth, " ");
 			lines.push("");
 
-			for (let i = 0; i < allItems.length; i++) {
-				const item = allItems[i];
-				const isFocused = i === optionIndex;
-				const prefix = isFocused ? theme.fg("accent", "> ") : "  ";
-
-				if (item.isSubmit) {
-					const label = selected.size > 0 ? `✓ ${item.label} (${selected.size} selected)` : `○ ${item.label}`;
-					const styled = isFocused
-						? theme.fg("accent", label)
-						: theme.fg(selected.size > 0 ? "success" : "dim", label);
-					add(`${prefix}${styled}`);
-					continue;
-				}
-
-				if (item.isOther) {
-					const other = selected.get("other");
-					const marker = other ? "[x]" : "[ ]";
-					const suffix = other ? ` — ${other.label}` : "";
-					const styled = isFocused
-						? theme.fg("accent", `${marker} ${item.label}${suffix}`)
-						: theme.fg(other ? "success" : "text", `${marker} ${item.label}${suffix}`);
-					add(`${prefix}${styled}`);
-					continue;
-				}
-
-				const checked = selected.has(item.id);
-				const marker = checked ? "[x]" : "[ ]";
-				const label = `${marker} ${item.index}. ${item.label}`;
-				const styled = isFocused
-					? theme.fg("accent", label)
-					: theme.fg(checked ? "success" : "text", label);
-				add(`${prefix}${styled}`);
-				if (item.description) {
-					addWrapped(lines, theme.fg("muted", item.description), width, "     ");
-				}
-			}
-
-			if (editMode) {
+			if (currentTab === questions.length) {
+				addWrapped(lines, theme.fg("accent", theme.bold("Review and submit")), renderWidth, " ");
 				lines.push("");
-				add(theme.fg("muted", " Write your custom answer:"));
-				for (const line of editor.render(Math.max(1, width - 2))) {
-					add(` ${line}`);
-				}
+				questions.forEach((question, index) => {
+					const state = states[index];
+					let summary = "(unanswered)";
+					if (question.kind === "prompt" && question.options.length === 0 && state.text) summary = state.text;
+					else if (state.dontKnow) summary = "I don't know";
+					else {
+						const labels = [...state.selected].sort((a, b) => a - b).map((i) => question.options[i]?.label);
+						if (state.other) labels.push(`Other: ${state.other}`);
+						if (labels.length) summary = labels.join(", ");
+					}
+					addWrapped(lines, theme.fg("muted", `Q${index + 1}: `) + theme.fg("text", summary), renderWidth, " ");
+				});
 				lines.push("");
-				add(theme.fg("dim", " Enter to save • Esc to go back"));
+				if (canSubmit(questions, states)) add(theme.fg("success", " Press Enter to submit"));
+				else {
+					const missing = questions
+						.map((question, index) => ({ question, index }))
+						.filter(({ question, index }) =>
+							(question.kind === "quiz" || question.required) && !isAnswered(question, states[index]),
+						)
+						.map(({ index }) => `Q${index + 1}`)
+						.join(", ");
+					add(theme.fg("warning", ` Required unanswered: ${missing}`));
+					if (submitWarning) add(theme.fg("warning", " Complete required prompts and all quizzes."));
+				}
 			} else {
-				lines.push("");
-				if (selected.size === 0) {
-					add(theme.fg("warning", " Select at least one answer before submitting."));
+				const question = questions[currentTab];
+				const state = states[currentTab];
+				addWrapped(lines, theme.fg("text", question.question), renderWidth, " ");
+				if (question.details) {
+					lines.push("");
+					addWrapped(lines, theme.fg("muted", question.details), renderWidth, " ");
 				}
-				add(theme.fg("dim", " ↑↓ navigate • Space toggle • Enter edit/submit • Esc cancel"));
+				lines.push("");
+
+				if (question.kind === "prompt" && question.options.length === 0) {
+					add(theme.fg("muted", " Your answer:"));
+					for (const line of editors[currentTab].render(Math.max(1, renderWidth - 2))) add(` ${line}`);
+				} else {
+					question.options.forEach((option, index) => {
+						const focused = state.focus === index;
+						const checked = state.selected.has(index);
+						const marker = question.multiSelect ? (checked ? "[x]" : "[ ]") : checked ? "(●)" : "( )";
+						const prefix = focused ? theme.fg("accent", "> ") : "  ";
+						const text = `${marker} ${option.label}`;
+						addWrapped(lines, focused ? theme.fg("accent", text) : theme.fg(checked ? "success" : "text", text), renderWidth, prefix);
+						if (option.description) addWrapped(lines, theme.fg("muted", option.description), renderWidth, "      ");
+					});
+					const extraFocused = state.focus === question.options.length;
+					const isOther = question.kind === "prompt";
+					const extraChecked = isOther ? Boolean(state.other) : state.dontKnow;
+					const marker = question.multiSelect ? (extraChecked ? "[x]" : "[ ]") : extraChecked ? "(●)" : "( )";
+					const label = isOther ? `Other${state.other ? ` — ${state.other}` : ""}` : "I don't know";
+					addWrapped(
+						lines,
+						extraFocused ? theme.fg("accent", `${marker} ${label}`) : theme.fg(extraChecked ? "success" : "text", `${marker} ${label}`),
+						renderWidth,
+						extraFocused ? theme.fg("accent", "> ") : "  ",
+					);
+					if (state.editingOther) {
+						lines.push("");
+						add(theme.fg("muted", " Other answer:"));
+						for (const line of editors[currentTab].render(Math.max(1, renderWidth - 2))) add(` ${line}`);
+					}
+				}
 			}
 
-			add(theme.fg("accent", "─".repeat(width)));
-			cachedLines = lines;
-			cachedWidth = width;
-			return lines;
+			lines.push("");
+			const editing =
+				currentTab < questions.length &&
+				((questions[currentTab].kind === "prompt" && questions[currentTab].options.length === 0) ||
+					states[currentTab].editingOther);
+			addWrapped(
+				lines,
+				theme.fg(
+					"dim",
+					editing
+						? "Enter save • Tab/Shift-Tab or ←→ tabs • Esc cancel all"
+						: "Tab/Shift-Tab or ←→ tabs • ↑↓ select • Space toggle multi • Enter select/save • Esc cancel all",
+				),
+				renderWidth,
+				" ",
+			);
+			add(theme.fg("accent", "─".repeat(renderWidth)));
+			cachedLines = lines.map((line) => truncateToWidth(line, renderWidth));
+			cachedWidth = renderWidth;
+			return cachedLines;
 		}
 
 		return {
@@ -538,102 +639,79 @@ async function askMultiChoice(
 	});
 }
 
-// Shared UI mutex. ctx.ui.custom()/editor can only handle one active call at
-// a time, so ALL pop-up-style tools (ask, quiz, ...) must
-// serialize against each other, not just against themselves. We stash one
-// mutex on globalThis so separate extension files can share it without
-// importing each other.
+// Shared UI mutex. Pop-up tools must not run multiple ctx.ui.custom/editor calls concurrently.
 const SHARED_UI_LOCK_KEY = "__piSharedUiLock";
 function getSharedUiLock() {
-	const g = globalThis as any;
-	if (!g[SHARED_UI_LOCK_KEY]) {
+	const global = globalThis as any;
+	if (!global[SHARED_UI_LOCK_KEY]) {
 		let chain: Promise<void> = Promise.resolve();
-		g[SHARED_UI_LOCK_KEY] = {
+		global[SHARED_UI_LOCK_KEY] = {
 			withLock<T>(fn: () => T | Promise<T>): Promise<T> {
-				const prev = chain;
+				const previous = chain;
 				let release: () => void;
-				chain = new Promise<void>((r) => { release = r; });
-				return prev.then(fn).finally(() => release!());
+				chain = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				return previous.then(fn).finally(() => release!());
 			},
 		};
 	}
-	return g[SHARED_UI_LOCK_KEY] as { withLock<T>(fn: () => T | Promise<T>): Promise<T> };
+	return global[SHARED_UI_LOCK_KEY] as { withLock<T>(fn: () => T | Promise<T>): Promise<T> };
 }
 const sharedUiLock = getSharedUiLock();
-
-function withUILock<T>(fn: () => Promise<T>): Promise<T> {
-	return sharedUiLock.withLock(fn);
-}
 
 export default function ask(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "ask",
 		label: "ask",
 		description:
-			"Ask the user a single question and pause execution until they answer. Use this when requirements are ambiguous, user preferences are needed, a decision would materially affect implementation, or you need confirmation before proceeding. Ask exactly one question per tool call, and prefer multiple separate tool calls over bundling unrelated questions together.",
+			"Ask up to 8 independent questions in one tabbed batch. Mix prompts for requirements/preferences with quizzes for objective knowledge. Gather independent known questions into one questions[] call instead of separate calls.",
 		promptSnippet:
-			"Use ask to ask exactly one clarifying question, missing-requirement question, preference question, or decision question before continuing.",
+			"Use ask with questions[] to gather up to 8 known clarifications, preferences, decisions, or objective quiz answers in one call.",
 		promptGuidelines: [
-			"Ask exactly one question per ask call.",
-			"If you need answers to multiple questions, make multiple separate ask calls instead of combining them into one prompt.",
-			'With ask, users can always select "Other" to provide custom text input when options are provided.',
-			"Set ask multiSelect: true only when you need multiple answers to the same question.",
-			'When ask recommends a specific option, make it the first option in the list and add "(Recommended)" at the end of the label.',
+			"Gather independent questions you already know you need into one questions[] call; one ask call supports up to 8 questions.",
+			"Use prompt questions for requirements, preferences, and decisions. Omit options for free text.",
+			'For prompt options, put the recommended option first and suffix its label with "(Recommended)".',
+			"Use quiz questions only for objective knowledge, with balanced distractors and a required explanation.",
+			"Quiz correctAnswer keys are option values, not labels.",
+			'Choice prompts automatically allow "Other"; quizzes instead include an exclusive "I don\'t know" choice.',
 			"Prefer ask over guessing when requirements, preferences, or implementation choices are unclear.",
-			"Use ask when multiple valid implementation paths exist and the preferred path depends on user choice.",
 		],
 		parameters: AskParams,
+		executionMode: "sequential",
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const options = normalizeOptions(params.options);
-			const context = params.details?.trim() || undefined;
-			const mode: AskMode = options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
+			const normalized = normalizeQuestions(params.questions);
+			if (!normalized.questions) return unavailableResult(`Invalid ask request: ${normalized.error}`);
+			if (signal?.aborted) return cancelledResult();
+			if (!ctx.hasUI || ctx.mode !== "tui") return unavailableResult("ask requires interactive TUI mode");
 
-			if (signal?.aborted) {
-				return cancelledResult(params.question, mode, context);
-			}
-
-			if (!ctx.hasUI) {
-				return unavailableResult(params.question, mode, "ask requires interactive mode UI", context);
-			}
-
-			return withUILock(async () => {
-				if (mode === "text") {
-					const editorTitle = context ? `${params.question}\n\n${context}` : params.question;
-					const answer = await ctx.ui.editor(editorTitle);
-					if (answer === undefined) {
-						return cancelledResult(params.question, mode, context);
-					}
-					return buildResult(params.question, context, mode, [
-						{ type: "text", label: answer.trim(), value: answer.trim() },
-					]);
-				}
-
-				if (mode === "single-select") {
-					const answer = await askSingleChoice(ctx, params.question, context, options);
-					if (!answer) {
-						return cancelledResult(params.question, mode, context);
-					}
-					return buildResult(params.question, context, mode, [answer]);
-				}
-
-				const answers = await askMultiChoice(ctx, params.question, context, options);
-				if (!answers) {
-					return cancelledResult(params.question, mode, context);
-				}
-				return buildResult(params.question, context, mode, answers);
+			return sharedUiLock.withLock(async () => {
+				if (signal?.aborted) return cancelledResult();
+				const states = await showQuestions(ctx, normalized.questions!, signal);
+				if (signal?.aborted || !states) return cancelledResult();
+				const responses = normalized.questions!.map((question, index) => responseFor(question, states[index]));
+				const quizResponses = responses.filter((response): response is QuizResponse => response.kind === "quiz");
+				const score = {
+					correct: quizResponses.filter((response) => response.correct).length,
+					total: quizResponses.length,
+				};
+				return {
+					content: [{ type: "text" as const, text: resultText(responses, score) }],
+					details: { status: "answered", responses, score } as AskResultDetails,
+				};
 			});
 		},
 
 		renderCall(args, theme) {
-			const options = normalizeOptions(args.options as Array<{ label: string; value?: string; description?: string }> | undefined);
-			let text = theme.fg("toolTitle", theme.bold("ask ")) + theme.fg("muted", args.question);
-			if (args.multiSelect) {
-				text += theme.fg("dim", " [multi-select]");
-			}
-			if (options.length > 0) {
-				const labels = [...options.map((option) => option.label), getOtherLabel(options)].join(", ");
-				text += `\n${theme.fg("dim", `  Options: ${labels}`)}`;
+			const questions = Array.isArray(args.questions) ? args.questions : [];
+			let text = theme.fg("toolTitle", theme.bold("ask ")) + theme.fg("muted", `${questions.length} question${questions.length === 1 ? "" : "s"}`);
+			for (let index = 0; index < questions.length; index++) {
+				const raw = questions[index];
+				const question = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : undefined;
+				const kind = question?.kind === "quiz" ? "quiz" : question?.kind === "prompt" ? "prompt" : "invalid";
+				const label = typeof question?.question === "string" ? question.question : "(malformed question)";
+				text += `\n${theme.fg("dim", `  Q${index + 1} [${kind}] `)}${theme.fg("muted", label)}`;
 			}
 			return new Text(text, 0, 0);
 		},
@@ -644,25 +722,30 @@ export default function ask(pi: ExtensionAPI) {
 				const first = result.content[0];
 				return new Text(first?.type === "text" ? first.text : "", 0, 0);
 			}
-
-			if (details.status === "cancelled") {
-				return new Text(theme.fg("warning", details.message || "Cancelled"), 0, 0);
-			}
-
-			if (details.status === "unavailable") {
+			if (details.status !== "answered") {
 				return new Text(theme.fg("warning", details.message || "ask unavailable"), 0, 0);
 			}
 
-			const lines = details.answers.map((answer) => {
-				switch (answer.type) {
-					case "text":
-						return `${theme.fg("success", "✓ ")}${theme.fg("accent", answer.label || "(empty response)")}`;
-					case "other":
-						return `${theme.fg("success", "✓ ")}${theme.fg("muted", "Other: ")}${theme.fg("accent", answer.label)}`;
-					case "option":
-						return `${theme.fg("success", "✓ ")}${theme.fg("accent", `${answer.index}. ${answer.label}`)}`;
+			const lines: string[] = [];
+			details.responses.forEach((response, index) => {
+				lines.push(theme.fg("accent", `Q${index + 1}: ${response.question}`));
+				if (response.kind === "prompt") {
+					if (!response.answered) lines.push(theme.fg("muted", "  (unanswered)"));
+					else if (response.mode === "text") lines.push(`${theme.fg("success", "✓ ")}${response.text}`);
+					else {
+						const answers = [...response.selectedLabels, ...(response.other ? [`Other: ${response.other}`] : [])];
+						lines.push(`${theme.fg("success", "✓ ")}${answers.join(", ")}`);
+					}
+				} else {
+					const selected = response.dontKnow ? "I don't know" : response.selectedLabels.join(", ");
+					lines.push(`${theme.fg(response.correct ? "success" : "warning", response.correct ? "✓" : "✗")} ${selected}`);
+					lines.push(theme.fg("muted", `  Correct values: ${response.correctValues.join(", ")}`));
+					lines.push(theme.fg("muted", `  ${response.explanation}`));
 				}
 			});
+			if (details.score && details.score.total > 0) {
+				lines.push(theme.fg("accent", `Score: ${details.score.correct}/${details.score.total}`));
+			}
 			return new Text(lines.join("\n"), 0, 0);
 		},
 	});

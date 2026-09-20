@@ -3,7 +3,8 @@
   "theme": "tokyonight",
   "packages": [
     "npm:@sreetej510/pi-usage",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:@cortexkit/pi-anthropic-auth"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -33,5 +34,12 @@
     "skipPrompt": true
   },
   "hideThinkingBlock": false,
-  "showCacheMissNotices": true
+  "showCacheMissNotices": true,
+  "enabledModels": [
+    "anthropic/claude-fable-5",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-5.6-luna",
+    "anthropic/claude-opus-5",
+    "openai-codex/gpt-5.6-sol"
+  ]
 }

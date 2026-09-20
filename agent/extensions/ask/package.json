@@ -2,6 +2,9 @@
 	"name": "pi-ask",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"test": "node --experimental-strip-types src/index.test.ts"
+	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	}
