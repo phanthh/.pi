@@ -16,7 +16,7 @@ import {
   type OAuthAccount,
   type OAuthQuotaSnapshot,
   setLogLevel,
-} from '@pi-ext/anthropic-auth-core'
+} from '../index.ts'
 // Source-side logger import — installed as a second sink so PrimeManager logs
 // (which are emitted through the in-package logger instance loaded via the
 // relative `./logger.ts` path) reach the test capture array. The dist logger

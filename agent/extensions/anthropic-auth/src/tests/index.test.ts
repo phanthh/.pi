@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { saveAccounts } from '@pi-ext/anthropic-auth-core'
+import { saveAccounts } from '../core/index.ts'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 
 import cortexKitPiAnthropicAuth from '../index.ts'

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadAccounts, saveAccounts } from '@pi-ext/anthropic-auth-core'
+import { loadAccounts, saveAccounts } from '../core/index.ts'
 
 import {
   buildExplicitBaseMessagesUrl,

@@ -20,7 +20,7 @@ import {
   orderClaudeCodeBody,
   signRequestBody,
   type ThinkingPrefixMismatchBehavior,
-} from '@pi-ext/anthropic-auth-core'
+} from './core/index.ts'
 import type {
   Context,
   ImageContent,
@@ -429,6 +429,66 @@ function systemPromptText(prompt: unknown): string {
   return parts.join('\n\n')
 }
 
+type TranscriptSystemMessage = {
+  role: 'system'
+  content?: unknown
+  sections?: Record<string, string | null>
+  toolsAdded?: Tool[]
+  toolsRemoved?: Array<{ name: string }>
+}
+
+function transcriptContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .flatMap((block) => {
+      const record = block as { type?: unknown; text?: unknown } | null
+      return record?.type === 'text' && typeof record.text === 'string'
+        ? [record.text]
+        : []
+    })
+    .join('\n')
+}
+
+export function resolveAnthropicContext(context: Context): {
+  messages: Message[]
+  systemPrompt: string
+  tools: Tool[]
+} {
+  const promptParts: string[] = []
+  const shorthandPrompt = systemPromptText(context.systemPrompt)
+  if (shorthandPrompt) promptParts.push(shorthandPrompt)
+
+  const sections = new Map<string, string>()
+  const tools = new Map((context.tools ?? []).map((tool) => [tool.name, tool]))
+  const messages: Message[] = []
+
+  for (const message of context.messages as Array<
+    Message | TranscriptSystemMessage
+  >) {
+    if (message.role !== 'system') {
+      messages.push(message as Message)
+      continue
+    }
+
+    const content = transcriptContentText(message.content)
+    if (content) promptParts.push(content)
+    for (const [name, value] of Object.entries(message.sections ?? {})) {
+      if (value === null) sections.delete(name)
+      else sections.set(name, value)
+    }
+    for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name)
+    for (const tool of message.toolsAdded ?? []) tools.set(tool.name, tool)
+  }
+
+  promptParts.push(...sections.values())
+  return {
+    messages,
+    systemPrompt: promptParts.join('\n\n'),
+    tools: [...tools.values()],
+  }
+}
+
 function splitPiSystemPrompt(prompt: string): {
   systemText?: string
   messageText: string
@@ -555,7 +615,11 @@ export async function buildAnthropicRequest(
     thinkingPrefixMismatchBehavior?: ThinkingPrefixMismatchBehavior
   } = {},
 ): Promise<{ body: AnthropicRequestBody; bodyText: string }> {
-  const messages = convertMessages(context.messages, modelId)
+  // Provider-facing contexts carry prompt/tool state in transcript system
+  // messages. Direct callers may still use Context's shorthand fields.
+  const resolvedContext = resolveAnthropicContext(context)
+  const systemPrompt = resolvedContext.systemPrompt
+  const messages = convertMessages(resolvedContext.messages, modelId)
   // Strip trailing assistant messages — Anthropic rejects prefill on some models
   while (
     messages.length &&
@@ -577,7 +641,6 @@ export async function buildAnthropicRequest(
     },
     { type: 'text', text: CLAUDE_CODE_IDENTITY },
   ]
-  const systemPrompt = systemPromptText(context.systemPrompt)
   if (systemPrompt.trim()) {
     // Pi's prompt cannot sit whole in the top-level system[] array: two lines of
     // its documentation paragraph (the docs/*.md enumeration and the "follow .md
@@ -618,7 +681,7 @@ export async function buildAnthropicRequest(
     messages,
   }
 
-  const tools = convertTools(context.tools)
+  const tools = convertTools(resolvedContext.tools)
   if (tools?.length) body.tools = tools
 
   if (fastModeEnabled && isFastModeSupportedModel(modelId)) {

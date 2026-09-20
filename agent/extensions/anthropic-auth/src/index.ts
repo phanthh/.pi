@@ -9,7 +9,7 @@ import {
   isClaudeFableOrMythos51Model,
   type MidConversationEffortTransition,
   refreshClaudeOAuthToken,
-} from '@pi-ext/anthropic-auth-core'
+} from './core/index.ts'
 import type {
   OAuthCredentials,
   OAuthLoginCallbacks,

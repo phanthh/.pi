@@ -52,7 +52,7 @@ import {
   setFastModePersistentEnabled,
   setLogLevelPersistent,
   setRoutingMode,
-} from '@pi-ext/anthropic-auth-core'
+} from './core/index.ts'
 import type {
   ExtensionAPI,
   ExtensionCommandContext,

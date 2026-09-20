@@ -55,7 +55,7 @@ import {
   THINKING_BINDING_CONTROLS_BETA,
   tokenFingerprint,
   usesMidConversationOutputConfig,
-} from '@pi-ext/anthropic-auth-core'
+} from './core/index.ts'
 import {
   type Api,
   type AssistantMessage,
@@ -71,7 +71,11 @@ import {
   type ToolCall,
 } from '@earendil-works/pi-ai'
 
-import { buildAnthropicRequest, fromClaudeCodeToolName } from './convert.ts'
+import {
+  buildAnthropicRequest,
+  fromClaudeCodeToolName,
+  resolveAnthropicContext,
+} from './convert.ts'
 import { getPiAccountStoragePath } from './paths.ts'
 
 function errorText(error: unknown) {
@@ -1196,6 +1200,7 @@ export function streamCortexKitAnthropic(
   effortTransitions?: readonly MidConversationEffortTransition[],
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream()
+  const currentTools = resolveAnthropicContext(context).tools
 
   void (async () => {
     const output = createOutput(model)
@@ -1267,7 +1272,7 @@ export function streamCortexKitAnthropic(
             output.content.push({
               type: 'toolCall',
               id: String(block.id),
-              name: fromClaudeCodeToolName(String(block.name), context.tools),
+              name: fromClaudeCodeToolName(String(block.name), currentTools),
               arguments: {},
               partialJson: '',
               index: event.index,

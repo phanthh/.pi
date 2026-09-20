@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   computeCcVersionSuffix,
   type ProviderAccountUuid,
-} from '@pi-ext/anthropic-auth-core'
+} from '../core/index.ts'
 import type { Context, Message } from '@earendil-works/pi-ai'
 import { buildAnthropicRequest } from '../convert.ts'
 
@@ -1128,6 +1128,61 @@ describe('buildAnthropicRequest — host system prompt shapes', () => {
     const body = await buildBody([])
     expect(body.system).toHaveLength(2)
     expect(body.messages[0]).toEqual({ role: 'user', content: 'hello' })
+  })
+})
+
+describe('buildAnthropicRequest — transcript context', () => {
+  test('registers tools carried by provider-facing system messages', async () => {
+    const context = {
+      messages: [
+        {
+          role: 'system',
+          content: [
+            { type: 'text', text: 'Use the available tools.' },
+            { type: 'text', text: 'Call one when needed.' },
+          ],
+          toolsAdded: [
+            {
+              name: 'read',
+              description: 'Read a file',
+              parameters: {
+                type: 'object',
+                properties: { path: { type: 'string' } },
+                required: ['path'],
+              },
+            },
+          ],
+          timestamp: 0,
+        },
+        userMsg('read package.json'),
+      ],
+    } as unknown as Context
+
+    const { body } = await buildAnthropicRequest(
+      TEST_MODEL_ID,
+      context,
+      undefined,
+      defaultCache,
+    )
+
+    expect(body.tools).toEqual([
+      {
+        name: 'Read',
+        description: 'Read a file',
+        input_schema: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+        },
+        cache_control: { type: 'ephemeral' },
+      },
+    ])
+    const firstUserContent = body.messages[0]?.content as Array<
+      Record<string, unknown>
+    >
+    expect(firstUserContent[0]?.text).toBe(
+      'Use the available tools.\nCall one when needed.',
+    )
   })
 })
 

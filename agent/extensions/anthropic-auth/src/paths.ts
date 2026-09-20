@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { ACCOUNT_FILE_NAME } from '@pi-ext/anthropic-auth-core'
+import { ACCOUNT_FILE_NAME } from './core/index.ts'
 
 export function getPiConfigDir(): string {
   return process.env.PI_AGENT_DIR?.trim() || join(homedir(), '.pi', 'agent')

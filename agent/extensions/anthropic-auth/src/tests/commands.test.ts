@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CacheKeepSessionRegistry } from '@pi-ext/anthropic-auth-core'
+import { CacheKeepSessionRegistry } from '../core/index.ts'
 import type {
   ExtensionAPI,
   ExtensionCommandContext,

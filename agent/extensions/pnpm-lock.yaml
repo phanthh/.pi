@@ -86,12 +86,6 @@ importers:
 
   anthropic-auth:
     dependencies:
-      '@pi-ext/anthropic-auth-core':
-        specifier: workspace:*
-        version: link:../anthropic-auth-core
-
-  anthropic-auth-core:
-    dependencies:
       '@cortexkit/subc-client':
         specifier: 'catalog:'
         version: 0.11.1

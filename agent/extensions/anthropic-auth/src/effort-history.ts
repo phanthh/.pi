@@ -2,7 +2,7 @@ import {
   type AdaptiveEffort,
   type MidConversationEffortTransition,
   normalizeAdaptiveEffort,
-} from '@pi-ext/anthropic-auth-core'
+} from './core/index.ts'
 
 type SessionEntryLike = {
   id?: unknown

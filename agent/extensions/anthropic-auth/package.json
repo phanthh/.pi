@@ -3,12 +3,13 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test": "bun test src/tests"
+		"test": "bun test --preload ./src/tests/setup.ts src/tests && bun test --preload ./src/core/tests/setup.ts src/core/tests"
 	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@pi-ext/anthropic-auth-core": "workspace:*"
+		"@cortexkit/subc-client": "catalog:",
+		"xxhash-wasm": "catalog:"
 	}
 }
