@@ -1,0 +1,37 @@
+{
+  "lastChangelogVersion": "0.86.0",
+  "theme": "tokyonight",
+  "packages": [
+    "npm:@sreetej510/pi-usage",
+    "npm:pi-mcp-adapter"
+  ],
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "always",
+  "doubleEscapeAction": "tree",
+  "tuiMode": "regular",
+  "warnings": {
+    "anthropicExtraUsage": false
+  },
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "high",
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "markdown": {
+    "mermaid": "streaming"
+  },
+  "collapseChangelog": true,
+  "treeFilterMode": "default",
+  "compaction": {
+    "enabled": true,
+    "overrideMaxTokens": 250000,
+    "reserveTokens": 100000
+  },
+  "branchSummary": {
+    "skipPrompt": true
+  },
+  "hideThinkingBlock": false,
+  "showCacheMissNotices": true
+}

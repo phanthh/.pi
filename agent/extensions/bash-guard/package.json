@@ -1,0 +1,14 @@
+{
+	"name": "pi-bash-guard",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"shell-quote": "catalog:"
+	},
+	"devDependencies": {
+		"@types/shell-quote": "catalog:"
+	}
+}

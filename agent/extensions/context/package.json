@@ -1,0 +1,11 @@
+{
+	"name": "pi-context",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"scripts": {
+		"selftest": "node --experimental-strip-types src/selftest.ts"
+	}
+}

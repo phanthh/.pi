@@ -1,0 +1,15 @@
+{
+	"name": "pi-web-fetch",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"defuddle": "catalog:",
+		"linkedom": "catalog:",
+		"lodash": "catalog:",
+		"mime-types": "catalog:",
+		"wreq-js": "catalog:"
+	}
+}

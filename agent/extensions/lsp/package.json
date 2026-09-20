@@ -1,0 +1,11 @@
+{
+	"name": "pi-lsp",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"vscode-languageserver-protocol": "catalog:"
+	}
+}

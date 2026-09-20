@@ -1,0 +1,11 @@
+{
+	"name": "pi-tmux-subagents",
+	"private": true,
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"@pi-ext/tmux-layout": "workspace:*"
+	}
+}

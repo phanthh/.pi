@@ -1,0 +1,24 @@
+# whitelist: ignore everything, allow selected paths
+/*
+!/.github/
+!/README.md
+!/LICENSE
+!/.gitignore
+!/agent/
+
+/agent/*
+!/agent/extensions/
+!/agent/themes/
+!/agent/AGENTS.md
+!/agent/README.md
+!/agent/settings.json
+!/agent/om.json
+!/agent/web-search.json
+!/agent/skills/
+
+# sensible ignores
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
