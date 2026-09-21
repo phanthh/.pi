@@ -179,6 +179,36 @@ function convertTextAndImages(
   return blocks
 }
 
+function normalizeConsecutiveUserMessages(
+  messages: AnthropicRequestBody['messages'],
+): AnthropicRequestBody['messages'] {
+  const normalized: AnthropicRequestBody['messages'] = []
+
+  for (const message of messages) {
+    const previous = normalized.at(-1)
+    if (message.role !== 'user' || previous?.role !== 'user') {
+      normalized.push(message)
+      continue
+    }
+
+    const previousBlocks =
+      typeof previous.content === 'string'
+        ? [{ type: 'text', text: previous.content }]
+        : Array.isArray(previous.content)
+          ? previous.content
+          : []
+    const nextBlocks =
+      typeof message.content === 'string'
+        ? [{ type: 'text', text: message.content }]
+        : Array.isArray(message.content)
+          ? message.content
+          : []
+    previous.content = [...previousBlocks, ...nextBlocks]
+  }
+
+  return normalized
+}
+
 function convertMessages(
   messages: Message[],
   targetModelId: string,
@@ -346,7 +376,7 @@ function convertMessages(
     }
   }
 
-  return result
+  return normalizeConsecutiveUserMessages(result)
 }
 
 function convertTools(
@@ -381,6 +411,14 @@ function addEphemeralCacheControl(body: AnthropicRequestBody): void {
       if (lastBlock && typeof lastBlock === 'object') {
         lastBlock.cache_control = { type: 'ephemeral' }
       }
+    } else if (typeof content === 'string') {
+      message.content = [
+        {
+          type: 'text',
+          text: content,
+          cache_control: { type: 'ephemeral' },
+        },
+      ]
     }
     break
   }

@@ -149,16 +149,53 @@ describe('buildAnthropicRequest — prefill stripping', () => {
 })
 
 describe('convertMessages — basic transforms', () => {
-  test('converts user text message', async () => {
+  test('converts user text message and marks its final block for caching', async () => {
     const messages = await buildMessages([userMsg('hello world')])
-    expect(messages.length).toBe(1)
-    expect(messages[0]).toEqual({ role: 'user', content: 'hello world' })
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'hello world',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ])
   })
 
   test('skips empty user messages', async () => {
     const messages = await buildMessages([userMsg(''), userMsg('real message')])
-    expect(messages.length).toBe(1)
-    expect(messages[0]).toEqual({ role: 'user', content: 'real message' })
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'real message',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ])
+  })
+
+  test('normalizes consecutive user messages without flattening block boundaries', async () => {
+    const messages = await buildMessages([userMsg('first'), userMsg('second')])
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'first' },
+          {
+            type: 'text',
+            text: 'second',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ])
   })
 
   test('converts assistant text blocks', async () => {
@@ -179,7 +216,11 @@ describe('convertMessages — basic transforms', () => {
       toolResultMsg('call_1', 'file1.txt'),
       userMsg('thanks'),
     ])
-    expect(messages.length).toBe(4)
+    expect(messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+    ])
 
     // assistant with tool_use
     const assistantContent = messages[1]?.content as Array<
@@ -192,6 +233,11 @@ describe('convertMessages — basic transforms', () => {
     const toolContent = messages[2]?.content as Array<Record<string, unknown>>
     expect(toolContent[0]?.type).toBe('tool_result')
     expect(toolContent[0]?.tool_use_id).toBe('call_1')
+    expect(toolContent[1]).toEqual({
+      type: 'text',
+      text: 'thanks',
+      cache_control: { type: 'ephemeral' },
+    })
   })
 
   test('drops interrupted assistant tool_use without an immediate tool_result', async () => {
@@ -214,8 +260,8 @@ describe('convertMessages — basic transforms', () => {
       userMsg('continue'),
     ])
 
-    expect(messages).toHaveLength(2)
-    expect(messages.map((message) => message.role)).toEqual(['user', 'user'])
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.role).toBe('user')
     expect(JSON.stringify(messages)).not.toContain('tool_use')
     expect(JSON.stringify(messages)).not.toContain('toolu_aborted')
   })
@@ -235,8 +281,8 @@ describe('convertMessages — basic transforms', () => {
       userMsg('continue'),
     ])
 
-    expect(messages).toHaveLength(2)
-    expect(messages.map((message) => message.role)).toEqual(['user', 'user'])
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.role).toBe('user')
     expect(JSON.stringify(messages)).not.toContain('tool_use')
     expect(JSON.stringify(messages)).not.toContain('tool_result')
   })
@@ -248,8 +294,8 @@ describe('convertMessages — basic transforms', () => {
       userMsg('continue'),
     ])
 
-    expect(messages).toHaveLength(2)
-    expect(messages.map((message) => message.role)).toEqual(['user', 'user'])
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.role).toBe('user')
     expect(JSON.stringify(messages)).not.toContain('tool_result')
   })
 
@@ -257,7 +303,13 @@ describe('convertMessages — basic transforms', () => {
     const messages = await buildMessages([userMsg('hello \uD800 world')])
     expect(messages[0]).toEqual({
       role: 'user',
-      content: 'hello \uFFFD world',
+      content: [
+        {
+          type: 'text',
+          text: 'hello \uFFFD world',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     })
   })
 
@@ -268,7 +320,13 @@ describe('convertMessages — basic transforms', () => {
     const messages = await buildMessages([userMsg('hi \uD83D\uDE00 there')])
     expect(messages[0]).toEqual({
       role: 'user',
-      content: 'hi \uD83D\uDE00 there',
+      content: [
+        {
+          type: 'text',
+          text: 'hi \uD83D\uDE00 there',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     })
   })
 
@@ -444,10 +502,19 @@ describe('buildAnthropicRequest — Claude Code system[] shape', () => {
     expect(content[1]).toMatchObject({ type: 'text', text: 'hello' })
   })
 
-  test('leaves system[] and messages untouched when no prompt is set', async () => {
+  test('marks the last user text for caching when no prompt is set', async () => {
     const body = await buildBody([userMsg('hello')])
     expect(body.system).toHaveLength(2)
-    expect(body.messages[0]).toEqual({ role: 'user', content: 'hello' })
+    expect(body.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'hello',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+    })
   })
 
   test('pins the Claude Code suffix by Pi session across compacted history', async () => {
@@ -795,13 +862,18 @@ describe('convertMessages — empty error tool_result guard', () => {
       } as unknown as Message,
       userMsg('ok'),
     ])
-    // Both tool_results should be in same user message (batched)
+    // Both tool_results and the following user text share one user turn.
     const toolContent = messages[2]?.content as Array<Record<string, unknown>>
-    expect(toolContent.length).toBe(2)
-    for (const tr of toolContent) {
+    expect(toolContent.length).toBe(3)
+    for (const tr of toolContent.slice(0, 2)) {
       expect(tr.is_error).toBe(true)
       expect(tr.content).toEqual([{ type: 'text', text: 'Error' }])
     }
+    expect(toolContent[2]).toEqual({
+      type: 'text',
+      text: 'ok',
+      cache_control: { type: 'ephemeral' },
+    })
   })
 })
 
@@ -1127,7 +1199,16 @@ describe('buildAnthropicRequest — host system prompt shapes', () => {
   test('treats an empty block list as no prompt', async () => {
     const body = await buildBody([])
     expect(body.system).toHaveLength(2)
-    expect(body.messages[0]).toEqual({ role: 'user', content: 'hello' })
+    expect(body.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'hello',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+    })
   })
 })
 
@@ -1236,6 +1317,49 @@ describe('buildAnthropicRequest — cache breakpoint budget', () => {
       type: 'ephemeral',
       ttl: '1h',
     })
+  })
+
+  test('marks injected text after a tool result as the final cache block', async () => {
+    const { body } = await buildAnthropicRequest(
+      TEST_MODEL_ID,
+      {
+        messages: [
+          userMsg('run it'),
+          toolCallMsg('tool_1', 'read'),
+          toolResultMsg('tool_1', 'output'),
+          userMsg('background command completed'),
+        ],
+        systemPrompt: PI_PROMPT,
+        tools: [
+          {
+            name: 'read',
+            description: 'read a file',
+            parameters: { properties: {}, required: [] },
+          },
+        ],
+      } satisfies Context,
+      undefined,
+      defaultCache,
+    )
+
+    expect(body.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+    ])
+    const finalContent = body.messages[2]?.content as Array<
+      Record<string, unknown>
+    >
+    expect(finalContent.map((block) => block.type)).toEqual([
+      'tool_result',
+      'text',
+    ])
+    expect(finalContent[0]?.cache_control).toBeUndefined()
+    expect(finalContent[1]).toMatchObject({
+      text: 'background command completed',
+      cache_control: { type: 'ephemeral' },
+    })
+    expect(countBreakpoints(body)).toBe(4)
   })
 
   test('spends the whole budget on the top-level control in automatic', async () => {
