@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Read-only critical code reviewer; reports only evidence-backed, actionable findings
-model: openai-codex/gpt-5.6-sol
+model: anthropic/claude-opus-5
 thinking: high
 tools: read, bash, lsp, code_exec, tmux_subagent
 system-prompt: replace

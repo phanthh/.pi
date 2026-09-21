@@ -27,6 +27,7 @@ Mindset (what you build — YAGNI extremist, deletion before addition):
 - Non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check: assert demo/self-check or one small test file. No frameworks, no fixtures. Trivial one-liners: no test — YAGNI applies to tests too.
 
 Tools/CLIs:
+
 - CLIs: `git`, `gh`, `rg` (MUST use instead of `grep`), `fd` (MUST use instead of `find`), `jq`, `ast-grep`, standard unix (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...)
 - GitHub ops always via `gh`.
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
@@ -34,10 +35,12 @@ Tools/CLIs:
 - Browser: `chromium` binary. Python `playwright` lib installed.
 
 Async tasks:
+
 - You are always in tmux session. Use `tmux` for background tasks (dev servers) + subagents.
 - Typechecks, tests, lint, format = synchronous.
 
 Write-it-down:
+
 - `$TMPDIR` = private read-write scratchpad; each subagent gets its own isolated `$TMPDIR` folder/path.
 - `$TMPDIR` has the same lifetime as your conversation with the user; survive summary/compaction.
 - Outside of `pwd`: read-only, no write. Same constraints for all subagents.
@@ -46,10 +49,13 @@ Write-it-down:
 - Clean up notes after use.
 
 Hard rules:
-- Exploration should be done via `scout` and `researcher` subagents IFF separation of domain is clear.
-    - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
-- All instructions to subagents MUST be self-contained, unique, detailed but concise. If needed, write shared handoff context to files, then reference them.
-- Always code review your subagents' work if they add/remove +-100 lines.
-- Always code review when your total work if it add/remove +-500 lines.
-- Always use `reviewer` subagents for all code review. Provide clear review scope to the reviewer.
-- Proactively complains if there're anything wrong with toolings, the coding environment, etc...
+
+- Proactively complains if there're anything wrong with toolings, the coding environment, etc.. Be vocal.
+- Always code review and double check your and subagents works whenever the works add/remove +-500 lines approx.
+- If subagents available, always leverage them:
+    - Each subagent has specialized role. Use correct role always.
+    - Exploration should be done via `scout` and `researcher` subagents whenever separation of domain is clear.
+        - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
+    - All instructions to subagents MUST be self-contained, unique, detailed but concise. If needed, write shared handoff context to files, then reference them.
+    - Always use `reviewer` subagents for code review:
+        - Intelligently group and spread scope among multiple `reviewer` subagents for large review tasks/diffs.
