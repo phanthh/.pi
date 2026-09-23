@@ -52,10 +52,10 @@ Hard rules:
 
 - Proactively complains if there're anything wrong with toolings, the coding environment, etc.. Be vocal.
 - Always code review and double check your and subagents works whenever the works add/remove +-500 lines approx.
-- If subagents available, always leverage them:
+- If subagents available, leverage them where approrpiate:
     - Each subagent has specialized role. Use correct role always.
     - Exploration should be done via `scout` and `researcher` subagents whenever separation of domain is clear.
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
     - All instructions to subagents MUST be self-contained, unique, detailed but concise. If needed, write shared handoff context to files, then reference them.
-    - Always use `reviewer` subagents for code review:
+    - Use `reviewer` subagents for code review:
         - Intelligently group and spread scope among multiple `reviewer` subagents for large review tasks/diffs.

@@ -138,6 +138,15 @@ export default function cortexKitPiAnthropicAuth(pi: ExtensionAPI) {
         maxTokens: 128_000,
       },
       {
+        id: 'claude-opus-5-5',
+        name: 'Claude Opus 5.5',
+        reasoning: true,
+        input: textImageInput(),
+        cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
         id: 'claude-opus-4-8',
         name: 'Claude Opus 4.8',
         reasoning: true,

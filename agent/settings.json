@@ -1,10 +1,7 @@
 {
   "lastChangelogVersion": "0.86.0",
   "theme": "tokyonight",
-  "packages": [
-    "npm:@sreetej510/pi-usage",
-    "npm:pi-mcp-adapter"
-  ],
+  "packages": ["npm:pi-mcp-adapter", "npm:@narumitw/pi-usage"],
   "quietStartup": true,
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "always",
@@ -13,8 +10,8 @@
   "warnings": {
     "anthropicExtraUsage": false
   },
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "high",
   "terminal": {
     "showTerminalProgress": true
@@ -35,10 +32,10 @@
   "hideThinkingBlock": false,
   "showCacheMissNotices": true,
   "enabledModels": [
-    "anthropic/claude-fable-5",
-    "openai-codex/gpt-5.6-terra",
-    "openai-codex/gpt-5.6-luna",
-    "anthropic/claude-opus-5",
-    "openai-codex/gpt-5.6-sol"
+    "anthropic/claude-fable-5-1",
+    "openai-codex/gpt-6-terra",
+    "openai-codex/gpt-6-luna",
+    "anthropic/claude-opus-5-5",
+    "openai-codex/gpt-6-sol"
   ]
 }

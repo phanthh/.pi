@@ -82,15 +82,24 @@ interface QuestionState {
 	editingOther: boolean;
 }
 
-const OptionSchema = Type.Object({
-	label: Type.String({
-		description:
-			'Display label. Put a recommended option first and append "(Recommended)" to its label.',
-	}),
+const CommonOptionProperties = {
 	value: Type.Optional(
 		Type.String({ description: "Machine-readable value. Defaults to label; quiz answer keys refer to this value." }),
 	),
 	description: Type.Optional(Type.String({ description: "Optional detail shown below option." })),
+};
+
+const PromptOptionSchema = Type.Object({
+	label: Type.String({
+		description:
+			'Display label. Put the recommended option first and append "(Recommended)" to its label.',
+	}),
+	...CommonOptionProperties,
+});
+
+const QuizOptionSchema = Type.Object({
+	label: Type.String({ description: 'Display label. Never append "(Recommended)" or otherwise recommend an answer.' }),
+	...CommonOptionProperties,
 });
 
 const CommonQuestionProperties = {
@@ -102,7 +111,7 @@ const PromptQuestionSchema = Type.Object({
 	kind: Type.Literal("prompt"),
 	...CommonQuestionProperties,
 	options: Type.Optional(
-		Type.Array(OptionSchema, {
+		Type.Array(PromptOptionSchema, {
 			description:
 				"Choice options. Omit or pass [] for free text. Choice prompts automatically include Other.",
 		}),
@@ -114,7 +123,7 @@ const PromptQuestionSchema = Type.Object({
 const QuizQuestionSchema = Type.Object({
 	kind: Type.Literal("quiz"),
 	...CommonQuestionProperties,
-	options: Type.Array(OptionSchema, {
+	options: Type.Array(QuizOptionSchema, {
 		minItems: 2,
 		description: "At least two balanced answer choices. Display order is always shuffled.",
 	}),
@@ -672,7 +681,7 @@ export default function ask(pi: ExtensionAPI) {
 			"Gather independent questions you already know you need into one questions[] call; one ask call supports up to 8 questions.",
 			"Use prompt questions for requirements, preferences, and decisions. Omit options for free text.",
 			'For prompt options, put the recommended option first and suffix its label with "(Recommended)".',
-			"Use quiz questions only for objective knowledge, with balanced distractors and a required explanation.",
+			'Use quiz questions only for objective knowledge, with balanced distractors and a required explanation. Never label or describe any quiz option as "Recommended".',
 			"Quiz correctAnswer keys are option values, not labels.",
 			'Choice prompts automatically allow "Other"; quizzes instead include an exclusive "I don\'t know" choice.',
 			"Prefer ask over guessing when requirements, preferences, or implementation choices are unclear.",

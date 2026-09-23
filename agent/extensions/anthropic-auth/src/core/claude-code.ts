@@ -328,7 +328,7 @@ export function applyClaudeCodeMetadata(
   return true
 }
 
-// Claude Code 2.1.258 sends redact-thinking-2026-02-12, but it suppresses
+// Claude Code sends redact-thinking-2026-02-12, but it suppresses
 // thinking-block content that OpenCode displays; deliberately omitted after A/B proof on 2026-09-01.
 export const CLAUDE_CODE_FULL_AGENT_BETAS = [
   'oauth-2025-04-20',

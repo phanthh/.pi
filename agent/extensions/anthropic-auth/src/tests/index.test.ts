@@ -113,23 +113,34 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
     )
   })
 
-  test('exposes Claude Opus 5 in the Pi Anthropic catalog', () => {
+  test('exposes Claude Opus 5 and 5.5 in the Pi Anthropic catalog', () => {
     const { pi, providers } = mockPi()
 
     cortexKitPiAnthropicAuth(pi)
 
-    const opus5 = providers
-      .get('anthropic')
-      ?.models?.find((model) => model.id === 'claude-opus-5')
-    expect(opus5).toMatchObject({
-      id: 'claude-opus-5',
-      name: 'Claude Opus 5',
-      reasoning: true,
-      input: ['text', 'image'],
-      cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-    })
+    const models = providers.get('anthropic')?.models ?? []
+    expect(models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'claude-opus-5',
+          name: 'Claude Opus 5',
+          reasoning: true,
+          input: ['text', 'image'],
+          cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+          contextWindow: 1_000_000,
+          maxTokens: 128_000,
+        }),
+        expect.objectContaining({
+          id: 'claude-opus-5-5',
+          name: 'Claude Opus 5.5',
+          reasoning: true,
+          input: ['text', 'image'],
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+          contextWindow: 1_000_000,
+          maxTokens: 128_000,
+        }),
+      ]),
+    )
   })
 })
 

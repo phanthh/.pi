@@ -540,7 +540,7 @@ describe('buildAnthropicRequest — Claude Code system[] shape', () => {
 
     const firstHeader = String(first.system?.[0]?.text)
     expect(String(compacted.system?.[0]?.text)).toContain(
-      `cc_version=2.1.258.${computeCcVersionSuffix('messCage', '2.1.258')};`,
+      `cc_version=2.1.280.${computeCcVersionSuffix('messCage', '2.1.280')};`,
     )
     expect(String(compacted.system?.[0]?.text)).toBe(firstHeader)
     expect(String(other.system?.[0]?.text)).not.toBe(firstHeader)
@@ -553,10 +553,10 @@ describe('buildAnthropicRequest — Claude Code system[] shape', () => {
     const changedHeader = String(changed.system?.[0]?.text)
 
     expect(firstHeader).toContain(
-      `cc_version=2.1.258.${computeCcVersionSuffix('messCage', '2.1.258')};`,
+      `cc_version=2.1.280.${computeCcVersionSuffix('messCage', '2.1.280')};`,
     )
     expect(changedHeader).toContain(
-      `cc_version=2.1.258.${computeCcVersionSuffix('messDage', '2.1.258')};`,
+      `cc_version=2.1.280.${computeCcVersionSuffix('messDage', '2.1.280')};`,
     )
     expect(changedHeader).not.toBe(firstHeader)
   })
@@ -758,16 +758,18 @@ describe('buildAnthropicRequest — Opus 5 thinking', () => {
     expect(body.output_config).toBeUndefined()
   })
 
-  test('maps reasoning to output_config effort for Opus 5', async () => {
-    const { body } = await buildAnthropicRequest(
-      'claude-opus-5-20260701',
-      { messages: [userMsg('hello')], systemPrompt: 'test', tools: [] } as any,
-      { reasoning: 'high' } as any,
-      defaultCache,
-    )
+  test('maps reasoning to output_config effort for Opus 5 and 5.5', async () => {
+    for (const model of ['claude-opus-5-20260701', 'claude-opus-5-5']) {
+      const { body } = await buildAnthropicRequest(
+        model,
+        { messages: [userMsg('hello')], systemPrompt: 'test', tools: [] } as any,
+        { reasoning: 'high' } as any,
+        defaultCache,
+      )
 
-    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
-    expect(body.output_config).toEqual({ effort: 'high' })
+      expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+      expect(body.output_config).toEqual({ effort: 'high' })
+    }
   })
 
   test('sets display summarized (not omitted) so Opus 5 thinking is visible', async () => {

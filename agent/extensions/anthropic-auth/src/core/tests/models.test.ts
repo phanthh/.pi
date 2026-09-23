@@ -130,8 +130,9 @@ describe('isClaudeOpus5Model', () => {
     expect(isClaudeOpus5Model('claude-opus-5-fast')).toBe(true)
   })
 
-  test('matches a dated claude-opus-5 snapshot', () => {
+  test('matches a dated claude-opus-5 snapshot and Opus 5.5', () => {
     expect(isClaudeOpus5Model('claude-opus-5-20260701')).toBe(true)
+    expect(isClaudeOpus5Model('claude-opus-5-5')).toBe(true)
   })
 
   test('matches the dated fast snapshot', () => {
