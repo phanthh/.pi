@@ -15,6 +15,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and topic cutovers |
 | `cursor-auth` | Provider | Cursor OAuth and model access |
 | `goal` | `goal` tool | Keeps long-running objectives active until completion or drop |
+| `idle-timer` | Footer status | `💤 3m12s` since agent settled or a blocking prompt opened |
 | `lsp` | `lsp` tool | Language-server navigation, diagnostics, and refactors |
 | [`project-skill-rules`](project-skill-rules/README.md) | Prompt hook | Filters project skills by working directory |
 | [`reload`](reload/README.md) | `reload_pi` tool | Reloads extensions and resources, then resumes work |

@@ -187,6 +187,7 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 				promptSources: collectPromptSources(pi.getAllTools(), pi.getCommands()),
 			});
 			await showUsageView(ctx, {
+				compactionCount: ctx.sessionManager.getBranch().filter((entry) => entry.type === "compaction").length,
 				usage: computeUsage({
 					snapshot: mergeContextOnlyMessages(current, initial.snapshot),
 					// ReadonlySessionManager lacks buildSessionContext(); use pi's exported builder.

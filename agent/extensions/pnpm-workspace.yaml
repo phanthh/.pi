@@ -2,9 +2,9 @@ packages:
   - "*"
 
 catalog:
-  "@earendil-works/pi-ai": 0.85.1
-  "@earendil-works/pi-coding-agent": 0.85.1
-  "@earendil-works/pi-tui": 0.85.1
+  "@earendil-works/pi-ai": 0.87.1
+  "@earendil-works/pi-coding-agent": 0.87.1
+  "@earendil-works/pi-tui": 0.87.1
   "@cortexkit/subc-client": ^0.11.1
   "@jitl/quickjs-singlefile-mjs-release-sync": ^0.32.0
   "@types/node": ^24.0.0

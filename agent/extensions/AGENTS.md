@@ -29,8 +29,9 @@ extensions/
 | `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls; internal auth/account/quota/cache/relay/routing code lives in `src/core` |
 | `bash-guard` | hook on `bash` | subagents: headless hard-block; main session: off by default + irreversible-op floor. `/bash-guard` toggles |
 | `codemode` | `code_exec` tool | type-checked TS program run in QuickJS sandbox; calls pi tools from inside |
-| `context` | `/context`, `/compact`, `/recall`; `recall` + `new_topic` tools | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), topic cutovers. Has its own `README.md` |
+| `context` | `/context`, `/compact`, `/recall`; `recall` + `new_topic` tools | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), topic cutovers, idle-aware compaction (user msg after 5m cache TTL → compact first). Has its own `README.md` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
+| `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer) |
 | `tmux` | `tmux` tool | named panes for long-running processes |
 | `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents` |

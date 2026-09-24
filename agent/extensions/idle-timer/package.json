@@ -1,0 +1,11 @@
+{
+	"name": "@pi-ext/idle-timer",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "node src/format.test.ts"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	}
+}

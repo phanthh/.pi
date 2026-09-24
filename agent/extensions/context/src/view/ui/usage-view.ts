@@ -100,6 +100,8 @@ const MAP_KEY_COMPACT_SPARE_ROWS = 2;
 /** Everything the Usage view renders, classified once when the view opens. */
 export interface UsageViewInput {
 	readonly usage: ContextUsageSnapshot;
+	/** Completed compactions on the current session branch, including ancestors. */
+	readonly compactionCount: number;
 	readonly memory: OmMetrics;
 	readonly degradedReason?: string;
 	/** Non-fatal problems shown under the header, such as ignored configuration entries. */
@@ -314,7 +316,11 @@ export class UsageView {
 		const theme = this.theme;
 		const border = theme.fg("border", "─".repeat(Math.max(1, width)));
 		const notices = this.noticeLines(width);
-		const prefix = [border, "", ...this.headerLines(width), "", ...notices];
+		const prefix = [
+			border, "", ...this.headerLines(width),
+			this.fit(theme.fg("muted", `Compactions: ${this.input.compactionCount}`), width),
+			"", ...notices,
+		];
 		const memory = this.memoryLines(width);
 		const map = this.dashboardMap();
 		const availableRows = Math.max(

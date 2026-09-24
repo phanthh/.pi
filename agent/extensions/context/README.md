@@ -1,6 +1,6 @@
 # context
 
-Monolithic context management extension: context usage/injection visualization, deterministic compaction, recall, full observational memory (OM), and topic cutovers.
+Monolithic context management extension: context usage/injection visualization, deterministic compaction, recall, full observational memory (OM), topic cutovers, and idle-aware compaction.
 
 All implementation lives in this package. Compaction internals are under `src/compact/`; no separate compact package or extension is loaded.
 
@@ -103,6 +103,19 @@ new_topic → turn ends → compact keep:1 → invisible continue
 ```
 
 Use only for sharp topic cutovers, never follow-ups or subtasks. `/recall` still reaches compacted history.
+
+## Idle-aware compaction
+
+A user message sent after the provider prompt cache expired (5 min since last assistant response or `cache_warm` refresh) pays a full cache miss anyway, so the `input` hook compacts first (deterministic marker compaction, default smart keep), then the message is sent on the smaller context:
+
+```text
+input (user, agent idle, ≥5m since cache touch)
+  └─ enough live context? (non-system tokens > compaction.keepRecentTokens, pi's own gate)
+       ├─ no  → send unchanged
+       └─ yes → ctx.compact(marker) → await → send
+```
+
+Extension-sent messages and steering/follow-ups during a run are skipped. Compaction failure or Esc still sends the message.
 
 ## Checks
 

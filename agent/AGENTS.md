@@ -41,21 +41,20 @@ Async tasks:
 
 Write-it-down:
 
-- `$TMPDIR` = private read-write scratchpad; each subagent gets its own isolated `$TMPDIR` folder/path.
-- `$TMPDIR` has the same lifetime as your conversation with the user; survive summary/compaction.
-- Outside of `pwd`: read-only, no write. Same constraints for all subagents.
-- Want to remember → write it down (`TODOS.md`, `NOTES.md`). No relying on memory.
-- Shared context notes → current working directory; reference when messaging subagents.
-- Clean up notes after use.
+- `/tmp` = public read-write scratchpad shared across all subagents; files in there survive summary/compaction.
+- Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
+- Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
+- Shared context notes/handoff documents → write it down to `/tmp`; reference when messaging subagents.
+- Always clean up notes/temporary files after use.
 
 Hard rules:
 
 - Proactively complains if there're anything wrong with toolings, the coding environment, etc.. Be vocal.
-- Always code review and double check your and subagents works whenever the works add/remove +-500 lines approx.
-- If subagents available, leverage them where approrpiate:
+- If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
-    - Exploration should be done via `scout` and `researcher` subagents whenever separation of domain is clear.
+    - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
-    - All instructions to subagents MUST be self-contained, unique, detailed but concise. If needed, write shared handoff context to files, then reference them.
-    - Use `reviewer` subagents for code review:
+    - Use `reviewer` subagents for code review (if requested):
         - Intelligently group and spread scope among multiple `reviewer` subagents for large review tasks/diffs.
+    - All instructions to subagents MUST be self-contained, unique, detailed and compact.
+        - If needed, write shared handoff context to files, then reference them.

@@ -13,6 +13,7 @@ import { effectiveMaxTokens } from "./compact/max-tokens.ts";
 import { applyConfig, DEFAULT_CONFIG } from "./config.ts";
 import { maxDropCountForPool, runDropper, selectDropCandidates } from "./dropper.ts";
 import { estimateTokens, hashId, MEMORY_END, MEMORY_START, OM_OBSERVATIONS_DROPPED, OM_OBSERVATIONS_RECORDED, OM_REFLECTIONS_RECORDED, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
+import { IDLE_COMPACT_AFTER_MS, lastCacheTouchMs, registerIdleCompact } from "./idle-compact.ts";
 import { registerNewTopic } from "./new-topic.ts";
 import { registerOm } from "./om.ts";
 import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } from "./parse.ts";
@@ -20,11 +21,11 @@ import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
 import { runReflector } from "./reflector.ts";
 import { buildTranscript } from "./transcript.ts";
 import { mergeLateInjectedMessage } from "./view/capture.ts";
-import { CONFIG_FILE_NAME as VIEW_CONFIG_FILE_NAME, getConfigFilePath } from "./view/config.ts";
+import { CONFIG_FILE_NAME as VIEW_CONFIG_FILE_NAME, DEFAULT_CONFIG as VIEW_DEFAULT_CONFIG, getConfigFilePath } from "./view/config.ts";
 import { parseContextCommand } from "./view/command.ts";
 import { buildSnapshot } from "./view/model.ts";
 import { computeUsage, toReportedUsage } from "./view/usage.ts";
-import { gaugeFillWidth } from "./view/ui/usage-view.ts";
+import { gaugeFillWidth, UsageView } from "./view/ui/usage-view.ts";
 
 // ── unified /context grammar ────────────────────────────────────────────────
 assert.deepEqual(parseContextCommand(""), { type: "view", view: "usage" });
@@ -37,6 +38,21 @@ assert.equal(parseContextCommand("unknown").type, "invalid");
 assert.equal(gaugeFillWidth(5, 10, 20), 10);
 assert.equal(gaugeFillWidth(15, 10, 20), 20, "overflow saturates gauge fill");
 assert.equal(gaugeFillWidth(1, 0, 20), 0);
+const gauge = { current: 0, limit: 1 };
+const usageInput = {
+  usage: computeUsage({ snapshot: buildSnapshot([], "real-turn", new Date(0)), messages: [] }),
+  memory: {
+    activeObservations: 0, totalObservations: 0, reflections: 0, tombstones: 0,
+    observer: gauge, reflector: gauge, observationPool: gauge, dropperPressure: gauge,
+  },
+  categoryColors: VIEW_DEFAULT_CONFIG.categoryColors,
+};
+const plainTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+for (const count of [0, 2]) {
+  const view = new UsageView(plainTheme, { ...usageInput, compactionCount: count }, () => {}, () => 40);
+  assert.match(view.render(80).join("\n"), new RegExp(`Compactions: ${count}\\b`));
+  assert.match(view.render(40).join("\n"), new RegExp(`Compactions: ${count}\\b`));
+}
 
 // ── view config filename compatibility ─────────────────────────────────────
 const configAgentDir = mkdtempSync(join(tmpdir(), "context-config-"));
@@ -405,6 +421,49 @@ const newTopicHarness = () => {
   await harness.eventHandlers.get("session_shutdown")?.({}, {});
   compactOptions.onComplete();
   assert.equal(harness.sentMessages.length, 0, "late compaction callback cannot continue a closed session");
+}
+
+// ── idle-aware compaction ───────────────────────────────────────────────────
+{
+  const at = (ms: number) => new Date(ms).toISOString();
+  const msg = (id: string, role: string, ms: number) => ({
+    type: "message", id, parentId: null, timestamp: at(ms),
+    message: { role, content: [{ type: "text", text: `${role} ${id}` }], timestamp: ms },
+  });
+  const branch: any[] = [
+    msg("u1", "user", 0), msg("a1", "assistant", 1_000),
+    msg("u2", "user", 2_000), msg("a2", "assistant", 3_000),
+    { type: "custom", id: "om", parentId: null, timestamp: at(9_000), customType: "om", data: {} },
+  ];
+  assert.equal(lastCacheTouchMs(branch), 3_000, "custom ledger entries do not reset idle clock");
+  assert.equal(lastCacheTouchMs([...branch, { type: "usage", kind: "cache_warm", timestamp: at(8_000) }]), 8_000, "cache warm refresh counts");
+  assert.equal(lastCacheTouchMs([msg("u", "user", 0)]), undefined);
+
+  let handler: any;
+  let clock = 0;
+  let keepTokens = 1;
+  registerIdleCompact({ on: (_name: string, h: unknown) => { handler = h; } } as any, {
+    now: () => clock,
+    keepTokens: () => keepTokens,
+  });
+  const run = async (entries: any[], source = "interactive") => {
+    let compacted = 0;
+    await handler({ source }, {
+      isIdle: () => true,
+      sessionManager: { getBranch: () => entries },
+      compact: (options: any) => { compacted++; options.onError(new Error("Compaction cancelled")); },
+      ui: { notify: () => {} },
+    });
+    return compacted;
+  };
+  clock = 3_000 + IDLE_COMPACT_AFTER_MS - 1;
+  assert.equal(await run(branch), 0, "warm cache: no compaction");
+  clock = 3_000 + IDLE_COMPACT_AFTER_MS;
+  assert.equal(await run(branch), 1, "expired cache: compact before message");
+  assert.equal(await run(branch, "extension"), 0, "extension-sent messages skip");
+  assert.equal(await run(branch.slice(0, 2)), 0, "too few messages skips");
+  keepTokens = 10_000;
+  assert.equal(await run(branch), 0, "live tokens under keepRecentTokens skips (pi would reject)");
 }
 
 console.log("context selftest ok");
