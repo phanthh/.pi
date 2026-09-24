@@ -32,7 +32,7 @@ Tools/CLIs:
 - GitHub ops always via `gh`.
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
-- Browser: `chromium` binary. Python `playwright` lib installed.
+- Browser/UI testing: Use `agent-browser` cli. Run `agent-browser --help` to see available commands.
 
 Async tasks:
 
