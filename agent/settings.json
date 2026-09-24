@@ -1,7 +1,10 @@
 {
-  "lastChangelogVersion": "0.86.0",
+  "lastChangelogVersion": "0.87.1",
   "theme": "tokyonight",
-  "packages": ["npm:pi-mcp-adapter", "npm:@narumitw/pi-usage"],
+  "packages": [
+    "npm:pi-mcp-adapter",
+    "npm:@narumitw/pi-usage"
+  ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "always",
@@ -24,7 +27,7 @@
   "compaction": {
     "enabled": true,
     "overrideMaxTokens": 250000,
-    "reserveTokens": 100000
+    "reserveTokens": 50000
   },
   "branchSummary": {
     "skipPrompt": true
@@ -32,10 +35,9 @@
   "hideThinkingBlock": false,
   "showCacheMissNotices": true,
   "enabledModels": [
-    "anthropic/claude-fable-5-1",
-    "openai-codex/gpt-6-terra",
+    "openai-codex/gpt-6-sol",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-opus-5-5",
-    "openai-codex/gpt-6-sol"
+		"opencode-go/space-bunny-free"
   ]
 }
