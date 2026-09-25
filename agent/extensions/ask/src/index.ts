@@ -368,7 +368,7 @@ function cancelledResult() {
 	};
 }
 
-async function showQuestions(
+export async function showQuestions(
 	ctx: ExtensionContext,
 	questions: Question[],
 	signal?: AbortSignal,
@@ -410,31 +410,37 @@ async function showQuestions(
 			refresh();
 		}
 
+		const isFreeText = (index: number) =>
+			questions[index].kind === "prompt" && questions[index].options.length === 0;
+		const isEditing = (index: number) =>
+			index < questions.length && (isFreeText(index) || states[index].editingOther);
+
+		/** Store editor text into state (Enter or leaving the tab). Returns whether it is non-empty. */
+		function save(index: number, value: string): boolean {
+			const question = questions[index];
+			const state = states[index];
+			const trimmed = value.trim();
+			if (isFreeText(index)) {
+				state.text = trimmed;
+				// Editor clears itself on submit; keep the saved answer visible and editable.
+				editors[index].setText(trimmed);
+				return Boolean(trimmed);
+			}
+			state.other = trimmed;
+			state.editingOther = false;
+			if (trimmed && !question.multiSelect) state.selected.clear();
+			return Boolean(trimmed);
+		}
+
 		for (let index = 0; index < questions.length; index++) {
 			editors[index].onSubmit = (value) => {
-				const question = questions[index];
-				const state = states[index];
-				const trimmed = value.trim();
-				if (question.kind === "prompt" && question.options.length === 0) {
-					state.text = trimmed;
-					if (trimmed) advance();
-					else refresh();
-					return;
-				}
-				if (!trimmed) {
-					state.other = "";
-					state.editingOther = false;
-					refresh();
-					return;
-				}
-				state.other = trimmed;
-				state.editingOther = false;
-				if (!question.multiSelect) state.selected.clear();
-				advance();
+				if (save(index, value)) advance();
+				else refresh();
 			};
 		}
 
 		function moveTab(delta: number) {
+			if (isEditing(currentTab)) save(currentTab, editors[currentTab].getText());
 			currentTab = (currentTab + delta + questions.length + 1) % (questions.length + 1);
 			submitWarning = false;
 			refresh();
@@ -445,11 +451,13 @@ async function showQuestions(
 				finish(null);
 				return;
 			}
-			if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+			// While editing, ←/→ move the cursor; only Tab/Shift-Tab switch tabs.
+			const arrowsSwitch = !isEditing(currentTab);
+			if (matchesKey(data, Key.tab) || (arrowsSwitch && matchesKey(data, Key.right))) {
 				moveTab(1);
 				return;
 			}
-			if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
+			if (matchesKey(data, Key.shift("tab")) || (arrowsSwitch && matchesKey(data, Key.left))) {
 				moveTab(-1);
 				return;
 			}
@@ -468,7 +476,7 @@ async function showQuestions(
 			const question = questions[currentTab];
 			const state = states[currentTab];
 			const editor = editors[currentTab];
-			if ((question.kind === "prompt" && question.options.length === 0) || state.editingOther) {
+			if (isEditing(currentTab)) {
 				editor.handleInput(data);
 				refresh();
 				return;
@@ -617,16 +625,12 @@ async function showQuestions(
 			}
 
 			lines.push("");
-			const editing =
-				currentTab < questions.length &&
-				((questions[currentTab].kind === "prompt" && questions[currentTab].options.length === 0) ||
-					states[currentTab].editingOther);
 			addWrapped(
 				lines,
 				theme.fg(
 					"dim",
-					editing
-						? "Enter save • Tab/Shift-Tab or ←→ tabs • Esc cancel all"
+					isEditing(currentTab)
+						? "Enter save • Tab/Shift-Tab tabs • Esc cancel all"
 						: "Tab/Shift-Tab or ←→ tabs • ↑↓ select • Space toggle multi • Enter select/save • Esc cancel all",
 				),
 				renderWidth,
@@ -695,7 +699,12 @@ export default function ask(pi: ExtensionAPI) {
 			if (signal?.aborted) return cancelledResult();
 			if (!ctx.hasUI || ctx.mode !== "tui") return unavailableResult("ask requires interactive TUI mode");
 
-			return sharedUiLock.withLock(async () => {
+			// Waiting for the shared lock must stay cancellable; the queued fn still runs
+			// later, sees the abort, and releases the lock in order.
+			const aborted = new Promise<ReturnType<typeof cancelledResult>>((resolve) => {
+				signal?.addEventListener("abort", () => resolve(cancelledResult()), { once: true });
+			});
+			const run = sharedUiLock.withLock(async () => {
 				if (signal?.aborted) return cancelledResult();
 				const states = await showQuestions(ctx, normalized.questions!, signal);
 				if (signal?.aborted || !states) return cancelledResult();
@@ -710,6 +719,7 @@ export default function ask(pi: ExtensionAPI) {
 					details: { status: "answered", responses, score } as AskResultDetails,
 				};
 			});
+			return Promise.race([run, aborted]);
 		},
 
 		renderCall(args, theme) {
