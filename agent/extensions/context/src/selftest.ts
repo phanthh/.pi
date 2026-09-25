@@ -44,6 +44,7 @@ const usageInput = {
   memory: {
     activeObservations: 0, totalObservations: 0, reflections: 0, tombstones: 0,
     observer: gauge, reflector: gauge, observationPool: gauge, dropperPressure: gauge,
+    dropper: { current: 5, limit: 10, blocked: "pool < 10% full" },
   },
   categoryColors: VIEW_DEFAULT_CONFIG.categoryColors,
 };
@@ -52,6 +53,11 @@ for (const count of [0, 2]) {
   const view = new UsageView(plainTheme, { ...usageInput, compactionCount: count }, () => {}, () => 40);
   assert.match(view.render(80).join("\n"), new RegExp(`Compactions: ${count}\\b`));
   assert.match(view.render(40).join("\n"), new RegExp(`Compactions: ${count}\\b`));
+}
+{
+  const rendered = new UsageView(plainTheme, { ...usageInput, compactionCount: 0 }, () => {}, () => 40).render(160).join("\n");
+  assert.match(rendered, /Dropper .*\(pool < 10% full\)/, "blocked gauge shows reason instead of percent");
+  assert.match(rendered, /Obs Pool/, "odd gauge count still renders last gauge side-by-side");
 }
 
 // ── view config filename compatibility ─────────────────────────────────────
@@ -346,10 +352,57 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
     "unknown memory IDs do not fall through to transcript search",
   );
   assert.equal(om.metrics(ctx as any).reflector.current, 0, "reflection batch restores progress");
+  assert.equal(om.metrics(ctx as any).reflector.blocked, "no unreflected observations", "reflector gauge mirrors candidate gate");
+  assert.equal(om.metrics(ctx as any).dropper.blocked, "no active observations", "dropper gauge mirrors candidate gate");
   branch = [{ id: "m2", type: "message", message: { role: "user", content: "second branch", timestamp: 2 } }];
   handlers.get("session_tree")?.({}, ctx);
   assert.equal(om.metrics(ctx as any).activeObservations, 0, "tree navigation cannot retain old-branch OM state");
   assert.ok(om.metrics(ctx as any).observer.current > 0, "new branch transcript is pending observation");
+  assert.equal(om.metrics(ctx as any).reflector.blocked, "no observations yet");
+}
+
+// ── OM leaf switch before session_tree ──────────────────────────────────────
+{
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const msg = (id: string) => ({ id, type: "message", message: { role: "user", content: `${id} ${"x".repeat(2_000)}`, timestamp: 1 } });
+  const trunk = Array.from({ length: 10 }, (_, i) => msg(`t${i}`));
+  const ledger = { id: "L0", type: "custom", customType: OM_OBSERVATIONS_RECORDED, data: { coversUpToId: "t4", observations: [] } };
+  let branch: any[] = [...trunk.slice(0, 5), ledger, ...trunk.slice(5), ...Array.from({ length: 10 }, (_, i) => msg(`a${i}`))];
+  const appended: unknown[] = [];
+  const pi = { on: (name: string, handler: (...args: any[]) => unknown) => handlers.set(name, handler), appendEntry: (_t: string, data: unknown) => { appended.push(data); } };
+  const om = registerOm(pi as any);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const ctx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => false,
+    sessionManager: { getBranch: () => branch },
+    model: { provider: "x", id: "y" },
+    modelRegistry: {
+      find: () => ({ provider: "x", id: "y" }),
+      complete: async () => {
+        await gate;
+        return { content: [{ type: "text", text: JSON.stringify({ observations: [{ content: "old branch fact", sourceIds: ["e1"] }] }) }] };
+      },
+    },
+  };
+  handlers.get("session_start")?.({}, ctx);
+  Object.assign(om.getConfig(), { model: null, observerModel: null, observerFallbackModels: [], sessionFallback: true, observeAfterTokens: 2_000 });
+  const onTrunk = [...trunk.slice(0, 5), ledger, ...trunk.slice(5, 7)];
+
+  handlers.get("agent_start")?.({}, ctx);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  branch = onTrunk; // leaf moved, session_tree not yet emitted
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(appended.length, 0, "worker result whose coverage left the branch is discarded");
+
+  handlers.get("session_tree")?.({}, ctx);
+  const expected = om.metrics(ctx as any).observer.current;
+  assert.ok(expected > 0);
+  branch = [...onTrunk, { id: "L1", type: "custom", customType: OM_OBSERVATIONS_RECORDED, data: { coversUpToId: "a9", observations: [] } }];
+  handlers.get("session_tree")?.({}, ctx);
+  assert.equal(om.metrics(ctx as any).observer.current, expected, "stray off-branch cursor keeps last on-branch cursor");
 }
 
 // ── new_topic orchestration ─────────────────────────────────────────────────

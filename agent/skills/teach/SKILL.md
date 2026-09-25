@@ -54,12 +54,21 @@ For one small concept, start directly.
 
 ## 3. Teach
 
-One node at a time:
+One node at a time. Each node gets same structured block, proactively — never make learner ask what something is:
 
-1. **Motivate** — problem forcing this node.
-2. **Establish** — plain foundation or derivation from established nodes.
-3. **Connect** — explicit dependency edge.
-4. **Check** — short quiz via `ask`.
+```text
+### Node N: <name>
+Terms     — every new term/symbol/shorthand: one-line definition
+Concrete  — real instance (code, data shape, file:line, example value)
+Why       — problem forcing this node
+How       — mechanism / derivation from established nodes
+Edge      — which earlier node(s) this builds on, which later node needs it
+Check     — short quiz via `ask`
+```
+
+No undefined symbols: any label in diagrams, examples, or quizzes (e.g. `L`, `C`, `T+Δ`) is defined in Terms before first use. Quizzes use only defined terms.
+
+If teaching a codebase seam, open with compact glossary of all nodes' key terms, then walk nodes.
 
 Choose mode:
 
@@ -72,7 +81,7 @@ Do not build on failed checkpoint.
 
 Wrong answer flow:
 
-1. Name exact gap.
+1. Name exact gap. First suspect own teaching: undefined term or skipped node?
 2. Explain from different angle.
 3. Ask one new quiz checking same node.
 4. Wrong again → mark unresolved gap. Ask whether to continue or dig deeper.

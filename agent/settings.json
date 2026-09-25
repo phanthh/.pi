@@ -32,12 +32,12 @@
   "branchSummary": {
     "skipPrompt": true
   },
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "showCacheMissNotices": true,
   "enabledModels": [
     "openai-codex/gpt-6-sol",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-opus-5-5",
-		"opencode-go/space-bunny-free"
+    "opencode-go/space-bunny-free"
   ]
 }

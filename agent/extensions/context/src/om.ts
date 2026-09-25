@@ -34,6 +34,8 @@ type Stage = "observer" | "reflector" | "dropper";
 export interface OmGauge {
   current: number;
   limit: number;
+  /** Why the stage cannot run regardless of `current`. */
+  blocked?: string;
 }
 
 export interface OmMetrics {
@@ -43,6 +45,7 @@ export interface OmMetrics {
   tombstones: number;
   observer: OmGauge;
   reflector: OmGauge;
+  dropper: OmGauge;
   observationPool: OmGauge;
   dropperPressure: OmGauge;
   activeStage?: Stage | "starting";
@@ -177,12 +180,14 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       transcript.flatMap((entry) => entry.timestamp ? [[entry.id, entry.timestamp] as const] : []),
     );
     const validSourceIds = new Set(branch.filter((entry) => entry.type === "message" || entry.type === "branch_summary").flatMap((entry) => entry.id ? [entry.id] : []));
+    // A stray batch (landed after a leaf switch) must not move cursors off-branch → full re-observe.
+    const cursorIds = new Set(transcript.map((entry) => entry.id));
     for (const entry of branch) {
       if (entry.type !== "custom") continue;
       if (entry.customType === OM_OBSERVATIONS_RECORDED || entry.customType === LEGACY_OBSERVATIONS_RECORDED) {
         const batch = readObservationBatch(entry.data, idAliases, validSourceIds, sourceTimestamps, entry.timestamp);
         if (!batch) continue;
-        observerCursor = batch.coversUpToId;
+        if (cursorIds.has(batch.coversUpToId)) observerCursor = batch.coversUpToId;
         for (const item of batch.observations) {
           if (observationIds.has(item.id)) continue;
           observationIds.add(item.id);
@@ -191,7 +196,7 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       } else if (entry.customType === OM_REFLECTIONS_RECORDED) {
         const batch = readReflectionBatch(entry.data, idAliases, observationIds);
         if (!batch) continue;
-        reflectorCursor = batch.coversUpToId;
+        if (cursorIds.has(batch.coversUpToId)) reflectorCursor = batch.coversUpToId;
         for (const item of batch.reflections) {
           if (reflectionIds.has(item.id)) {
             const existing = reflections.find((reflection) => reflection.id === item.id)!;
@@ -204,7 +209,7 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
       } else if (entry.customType === OM_OBSERVATIONS_DROPPED) {
         const batch = readDropBatch(entry.data, idAliases);
         if (!batch) continue;
-        dropperCursor = batch.coversUpToId;
+        if (cursorIds.has(batch.coversUpToId)) dropperCursor = batch.coversUpToId;
         batch.observationIds.forEach((id) => droppedIds.add(id));
       }
     }
@@ -259,6 +264,28 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     const index = cursorIndex(transcript, cursor);
     return transcript.slice(index >= 0 ? index + 1 : 0).reduce((sum, entry) => sum + estimateTokens(entry.text), 0);
   };
+  // Shared by consolidate and metrics so gauges mirror the real triggers.
+  const reflectorGate = (transcript: ReturnType<typeof buildTranscript>) => {
+    const active = activeObservations();
+    const coverage = reflectionCoverageMap(active, reflections);
+    const candidates = active.filter((observation) => coverage.get(observation.id) === "none");
+    const blocked = !observerCursor ? "no observations yet" : candidates.length === 0 ? "no unreflected observations" : undefined;
+    const gauge: OmGauge = { current: tokensAfter(transcript, reflectorCursor), limit: config.reflectAfterTokens, blocked };
+    return { active, candidates, gauge, due: !blocked && gauge.current >= gauge.limit };
+  };
+  const dropperGate = (transcript: ReturnType<typeof buildTranscript>) => {
+    const candidates = activeObservations();
+    const poolTokens = candidates.reduce((sum, observation) => sum + observation.tokenCount, 0);
+    const pressureDue = poolTokens >= config.dropperPressureThreshold * config.reflectorInputMaxTokens && dropperCursor !== observerCursor;
+    const blocked = candidates.length === 0
+      ? "no active observations"
+      : poolTokens / config.observationsPoolMaxTokens < config.dropperPoolFullnessThreshold
+        ? `pool < ${Math.round(config.dropperPoolFullnessThreshold * 100)}% full`
+        : undefined;
+    const gauge: OmGauge = { current: tokensAfter(transcript, dropperCursor), limit: config.reflectAfterTokens, blocked };
+    return { candidates, poolTokens, gauge, due: !blocked && (gauge.current >= gauge.limit || pressureDue) };
+  };
+
   const appendObservationBatch = (batch: ObservationBatch) => {
     const existing = new Set(observations.map((observation) => observation.id));
     const accepted = batch.observations.filter((observation) => !existing.has(observation.id));
@@ -299,7 +326,9 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     const run = { id: Symbol("om-consolidation"), controller: new AbortController() };
     activeRun = run;
     const startedGeneration = generation;
-    const current = () => startedGeneration === generation && activeRun?.id === run.id;
+    // Coverage must still be on the branch: the leaf can move before session_tree bumps generation.
+    const current = (coverage: string) => startedGeneration === generation && activeRun?.id === run.id
+      && ctx.sessionManager.getBranch().some((entry) => entry.id === coverage);
     try {
       let transcript = buildTranscript(ctx.sessionManager.getBranch() as readonly SessionEntryLike[]);
       const chunk = selectChunk(transcript, observerCursor, config.chunkMaxTokens);
@@ -311,40 +340,33 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
         ];
         const result = await runWithFallback("observer", ctx, (model) =>
           runObserver(ctx.modelRegistry, model, config, { chunk: chunk.entries, existingMemory }, run.controller.signal));
-        if (!current()) return;
+        if (!current(chunk.throughEntryId)) return;
         appendObservationBatch({ coversUpToId: chunk.throughEntryId, observations: result.observations });
       }
 
       transcript = buildTranscript(ctx.sessionManager.getBranch() as readonly SessionEntryLike[]);
       const latestObserverCoverage = observerCursor;
-      const active = activeObservations();
-      const reflectionCoverage = reflectionCoverageMap(active, reflections);
-      const reflectionCandidates = active.filter((observation) => reflectionCoverage.get(observation.id) === "none");
-      if (latestObserverCoverage && reflectionCandidates.length > 0 && tokensAfter(transcript, reflectorCursor) >= config.reflectAfterTokens) {
+      const reflector = reflectorGate(transcript);
+      if (latestObserverCoverage && reflector.due) {
         lastStage = "reflector";
         const produced = await runWithFallback("reflector", ctx, (model) => runReflector(ctx.modelRegistry, model, config, {
-          observations: reflectionCandidates,
-          activeObservations: active,
+          observations: reflector.candidates,
+          activeObservations: reflector.active,
           reflections,
         }, run.controller.signal));
-        if (!current()) return;
+        if (!current(latestObserverCoverage)) return;
         appendReflectionBatch({ coversUpToId: latestObserverCoverage, reflections: produced });
       }
 
-      const dropCandidates = activeObservations();
-      const poolTokens = dropCandidates.reduce((sum, observation) => sum + observation.tokenCount, 0);
-      const fullness = poolTokens / config.observationsPoolMaxTokens;
-      const pressure = poolTokens >= config.dropperPressureThreshold * config.reflectorInputMaxTokens;
-      const dropProgressDue = tokensAfter(transcript, dropperCursor) >= config.reflectAfterTokens;
-      const pressureDue = pressure && dropperCursor !== observerCursor;
-      if (observerCursor && dropCandidates.length > 0 && fullness >= config.dropperPoolFullnessThreshold && (dropProgressDue || pressureDue)) {
+      const dropper = dropperGate(transcript);
+      if (observerCursor && dropper.due) {
         lastStage = "dropper";
         const ids = await runWithFallback("dropper", ctx, (model) => runDropper(ctx.modelRegistry, model, config, {
-          candidates: dropCandidates,
-          activeObservations: dropCandidates,
+          candidates: dropper.candidates,
+          activeObservations: dropper.candidates,
           reflections,
         }, run.controller.signal));
-        if (!current()) return;
+        if (!current(observerCursor)) return;
         appendDropBatch({ coversUpToId: observerCursor, observationIds: ids });
       }
       lastError = undefined;
@@ -390,15 +412,16 @@ export const registerOm = (pi: ExtensionAPI): OmRuntime => {
     },
     metrics: (ctx) => {
       const transcript = buildTranscript(ctx.sessionManager.getBranch() as readonly SessionEntryLike[]);
-      const active = activeObservations();
-      const poolTokens = active.reduce((sum, observation) => sum + observation.tokenCount, 0);
+      const dropper = dropperGate(transcript);
+      const poolTokens = dropper.poolTokens;
       return {
-        activeObservations: active.length,
+        activeObservations: dropper.candidates.length,
         totalObservations: observations.length,
         reflections: reflections.length,
         tombstones: droppedIds.size,
         observer: { current: tokensAfter(transcript, observerCursor), limit: config.observeAfterTokens },
-        reflector: { current: tokensAfter(transcript, reflectorCursor), limit: config.reflectAfterTokens },
+        reflector: reflectorGate(transcript).gauge,
+        dropper: dropper.gauge,
         observationPool: {
           current: poolTokens,
           limit: config.observationsPoolMaxTokens,

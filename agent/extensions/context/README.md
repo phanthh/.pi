@@ -82,7 +82,7 @@ The effective window is `min(model.contextWindow, overrideMaxTokens)`, so the se
 
 ## `/context`
 
-- `/context` or `/context usage` — interactive context-window usage map plus Observer, Reflector, observation-pool, and Reflector-load gauges; ledger totals and active errors appear in the same dashboard.
+- `/context` or `/context usage` — interactive context-window usage map plus Observer, Reflector, Dropper, observation-pool, and Reflector-load gauges; ledger totals and active errors appear in the same dashboard. Stage gauges share the pipeline's trigger gates: a stage that cannot run shows why (e.g. `no unreflected observations`, `pool < 10% full`) instead of a percentage. Refl Load ≥100% also triggers the Dropper (pressure).
 - `/context injections` — inspect initial system prompt, tools, context files, skills, and extension additions.
 - `/context settings` — common OM thresholds and budgets; writes global `om.json`.
 - `/context reload` — reload global + trusted project OM config.

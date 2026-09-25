@@ -406,15 +406,18 @@ export class UsageView {
 		const gauges: Array<readonly [string, OmGauge, ThemeColor]> = [
 			["Observer", memory.observer, "accent"],
 			["Reflector", memory.reflector, "syntaxType"],
-			["Obs Pool", memory.observationPool, "mdLink"],
+			["Dropper", memory.dropper, "syntaxFunction"],
+			// Paired with Dropper: ≥100% also triggers it (pressure).
 			["Refl Load", memory.dropperPressure, "warning"],
+			["Obs Pool", memory.observationPool, "mdLink"],
 		];
 		if (width >= OM_SIDE_BY_SIDE_MIN_WIDTH) {
 			const cellWidth = Math.floor((width - BODY_INDENT.length - OM_GAUGE_GAP) / 2);
 			for (let index = 0; index < gauges.length; index += 2) {
 				const left = this.memoryGauge(...gauges[index], cellWidth);
-				const right = this.memoryGauge(...gauges[index + 1], cellWidth);
-				lines.push(this.fit(`${BODY_INDENT}${left}${" ".repeat(OM_GAUGE_GAP)}${right}`, width));
+				const next = gauges[index + 1];
+				const right = next ? `${" ".repeat(OM_GAUGE_GAP)}${this.memoryGauge(...next, cellWidth)}` : "";
+				lines.push(this.fit(`${BODY_INDENT}${left}${right}`, width));
 			}
 		} else {
 			const gaugeWidth = Math.max(1, width - BODY_INDENT.length);
@@ -430,7 +433,9 @@ export class UsageView {
 	private memoryGauge(label: string, gauge: OmGauge, color: ThemeColor, width: number): string {
 		const ratio = gauge.limit > 0 ? Math.max(0, gauge.current / gauge.limit) : 0;
 		const value = `${formatTokens(gauge.current)}/${formatTokens(gauge.limit)}`;
-		const percent = formatPercent(ratio);
+		// Blocked stage: show reason, not a misleading fill level.
+		const percent = gauge.blocked ? `(${gauge.blocked})` : formatPercent(ratio);
+		if (gauge.blocked) color = "borderMuted";
 		const fixedWidth = OM_LABEL_WIDTH + value.length + percent.length + 3;
 		const barWidth = Math.max(OM_MIN_BAR_WIDTH, width - fixedWidth);
 		const filledWidth = gaugeFillWidth(gauge.current, gauge.limit, barWidth);
