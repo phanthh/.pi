@@ -55,6 +55,7 @@ const CHILD_EXTENSION = join(EXT_DIR, "child.ts");
 const WIDGET_INTERVAL_KEY = Symbol.for("pi-tmux-subagents/widget-interval");
 const STATUS_INTERVAL_KEY = Symbol.for("pi-tmux-subagents/status-interval");
 const POLL_ABORT_KEY = Symbol.for("pi-tmux-subagents/poll-abort-controller");
+const RUNNING_SUBAGENTS_KEY = Symbol.for("pi-tmux-subagents/running");
 
 {
   const g = globalThis as any;
@@ -341,6 +342,8 @@ interface RunningSubagent {
 }
 
 const runningSubagents = new Map<string, RunningSubagent>();
+// child.ts (loaded separately via -e) reads this to hold auto-exit while own children run.
+(globalThis as any)[RUNNING_SUBAGENTS_KEY] = runningSubagents;
 
 let latestCtx: ExtensionContext | null = null;
 let widgetInterval: ReturnType<typeof setInterval> | null = null;

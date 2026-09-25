@@ -2,7 +2,7 @@
  * tmux extension — gives the agent named panes for long-running processes.
  *
  * Actions:
- *   run   — create a named pane (split right) and run a command in it
+ *   run   — create a named pane (next depth column, see tmux-layout) and run a command in it
  *           (autoExit: true → wait for completion in background, steer
  *            output + exit code back to the agent, close the pane)
  *   read  — capture output from a named pane
@@ -57,6 +57,8 @@ export default function (pi: ExtensionAPI) {
 	let myWindowId: string | null = null;
 	// paneId → wait-for channel of an active autoExit watcher
 	const watchers = new Map<string, string>();
+	// tmux-subagents' child.ts holds auto-exit while any of these are pending.
+	(globalThis as any)[Symbol.for("pi-tmux/auto-exit-watchers")] = watchers;
 
 	// Kill pane; wake its autoExit watcher (if any) so it reports instead of hanging forever.
 	async function killPane(paneId: string) {
@@ -157,7 +159,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use `tmux` run for long-running processes (dev servers, watchers, builds) instead of `bash`.",
 			"Use `bash` only for short-lived commands that complete quickly.",
-			"Layout: pi runs on the left. Worker panes (tmux tool + subagents) share one column on the right, stacked vertically and auto-rebalanced to equal heights.",
+			"Layout: one full-height column per spawn depth, left to right: pi | its panes (tmux tool + subagents) | their panes | … Each column stacks vertically, auto-rebalanced to equal heights.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["run", "read", "send", "stop", "list"] as const, {
@@ -234,8 +236,8 @@ export default function (pi: ExtensionAPI) {
 						watchers.set(newPaneId, channel);
 						pi.exec("tmux", ["wait-for", channel])
 							.then(async () => {
-								watchers.delete(newPaneId);
 								if (!isPaneAlive(newPaneId)) {
+									watchers.delete(newPaneId);
 									pi.sendMessage(
 										{
 											customType: "tmux_result",
@@ -262,6 +264,8 @@ export default function (pi: ExtensionAPI) {
 								}
 								const elapsed = Math.round((Date.now() - started) / 1000);
 								if (isPaneAlive(newPaneId)) closeWorkerPane(newPaneId);
+								// Delete right before steering: a subagent may auto-exit the moment this hits 0.
+								watchers.delete(newPaneId);
 								pi.sendMessage(
 									{
 										customType: "tmux_result",

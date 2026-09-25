@@ -22,7 +22,14 @@ export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
  * stopReason "error" also exits so the parent gets woken — paired with
  * findLatestAssistantError() so it learns it was an error, not a completion.
  */
-export function shouldAutoExitOnAgentEnd(_userTookOver: boolean, messages: any[] | undefined): boolean {
+export function shouldAutoExitOnAgentEnd(
+  _userTookOver: boolean,
+  messages: any[] | undefined,
+  runningChildren = 0,
+): boolean {
+  // Exiting would abort our own children's watchers and kill their panes;
+  // their results steer back in and trigger the turn that ends us.
+  if (runningChildren > 0) return false;
   if (messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -50,6 +57,17 @@ export function findLatestAssistantError(messages: any[] | undefined): SubagentE
     };
   }
   return null;
+}
+
+/**
+ * Own subagents + pending autoExit tmux panes whose results will steer back.
+ * Read via Symbol.for keys, not imports: index.ts has load-time side effects
+ * and the tmux extension is a separate package.
+ */
+export function runningChildCount(): number {
+  const g = globalThis as any;
+  const size = (key: string) => (g[Symbol.for(key)] as Map<string, unknown> | undefined)?.size ?? 0;
+  return size("pi-tmux-subagents/running") + size("pi-tmux/auto-exit-watchers");
 }
 
 export function parseDeniedTools(rawValue: string | undefined): string[] {
@@ -135,7 +153,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_end", (event, ctx) => {
     const messages = (event as any).messages as any[] | undefined;
-    const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages);
+    const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages, runningChildCount());
 
     if (shouldExit) {
       // Surface retry-exhausted turns through the .exit sidecar; without it the
@@ -228,6 +246,13 @@ export default function (pi: ExtensionAPI) {
       "Your LAST assistant message before this call becomes the summary.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      const children = runningChildCount();
+      if (children > 0) {
+        throw new Error(
+          `${children} of your subagent(s)/autoExit tmux pane(s) still running; exiting now would lose their results. ` +
+            "End your turn and wait — their results steer back automatically — then call subagent_done.",
+        );
+      }
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       recorder.subagentDone();
       if (sessionFile) writeFileSync(`${sessionFile}.exit`, JSON.stringify({ type: "done" }));

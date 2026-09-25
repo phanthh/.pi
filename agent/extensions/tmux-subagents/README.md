@@ -27,9 +27,21 @@ snapshot the child writes (`activity.ts`), not from session-file growth. Stall
 and recovery transitions steer a note back to the parent, except for
 `interactive` children (the user is driving that pane already).
 
-Panes: layout shared with the `tmux` tool via `../lib/tmux-layout.ts` — pi stays
-left, all worker panes (tool + subagent) stack in one right column and get
-rebalanced to equal heights on create/close.
+Panes: layout shared with the `tmux` tool via `@pi-ext/tmux-layout` — one
+full-height column per spawn depth, so a pane is always right of its spawner:
+
+```
+| pi (+ your panes) | depth 1: subagents + tmux panes of pi | depth 2: panes of depth-1 agents |
+```
+
+Each column stacks vertically, rebalanced to equal heights on create/close;
+worker columns share the width right of pi. Only panes tagged `@pi_depth`
+count as workers — your own splits are never stacked onto or resized.
+
+Nested delegation: an auto-exit child does not exit while it still has running
+subagents or pending `autoExit` tmux panes (exiting would kill them). Their
+results steer back, trigger a turn, and the child exits after that turn.
+`subagent_done` refuses for the same reason.
 
 ## Actions
 

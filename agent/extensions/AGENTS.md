@@ -34,7 +34,7 @@ extensions/
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer) |
 | `tmux` | `tmux` tool | named panes for long-running processes |
-| `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents` |
+| `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, scratch tmux session) |
 | `tmux-subagents` | `tmux_subagent` tool | async child pi sessions in panes + live widget; agent defs in `agents/*.md` |
 | `ttsr` | stream watcher | Time-Traveling Stream Rules: aborts mid-stream on rule violation, injects rule, retries. Rules = md+frontmatter in `rules/`, shadowed by `~/.pi/agent/ttsr` then `.pi/ttsr` |
 | `web-fetch` | `web_fetch` tool | wreq-js TLS impersonation + defuddle extraction |
