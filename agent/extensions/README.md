@@ -23,6 +23,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | `tmux-layout` | Library | Shared pane layout helpers |
 | [`tmux-subagents`](tmux-subagents/README.md) | `tmux_subagent` tool | Runs asynchronous pi subagents in visible tmux panes |
 | [`ttsr`](ttsr/README.md) | Stream hook | Interrupts and retries responses that violate markdown rules |
+| [`usage`](usage/README.md) | Footer status, `/usage` | Claude, Codex, and OpenCode Go subscription usage |
 | `web-fetch` | `web_fetch` tool | Fetches and extracts readable web content |
 | `web-search` | `web_search` tool | Searches a configurable SearXNG instance |
 
@@ -39,6 +40,7 @@ Workspace uses strict TypeScript with source entry points—no normal build step
 pnpm --filter pi-codemode selftest
 pnpm --filter pi-context selftest
 pnpm --filter @pi-ext/project-skill-rules test
+pnpm --filter @pi-ext/usage test
 pnpm --filter @pi-ext/cursor-auth check
 ```
 

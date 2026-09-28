@@ -361,6 +361,23 @@ export async function* parseSse(
   }
 }
 
+/**
+ * Response header naming the account that served a request, so pi
+ * `after_provider_response` consumers (usage extension) can attribute
+ * rate-limit headers: `main`, a fallback OAuth id, or `api:<id>`.
+ */
+export const SERVING_ACCOUNT_HEADER = 'x-pi-anthropic-auth-account'
+
+function stampServingAccount(response: Response, account: string): Response {
+  const headers = new Headers(response.headers)
+  headers.set(SERVING_ACCOUNT_HEADER, account)
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 async function sendAnthropicRequest(options: {
   model: Model<Api>
   context: Context
@@ -477,17 +494,24 @@ async function sendAnthropicRequest(options: {
     }
   }
 
-  if (options.apiAccount) return directFetch()
+  const servingAccount = options.apiAccount
+    ? `api:${options.apiAccount.id}`
+    : (options.oauthAccountId ?? STICKY_ROUTING_MAIN_ACCOUNT_ID)
+  if (options.apiAccount)
+    return stampServingAccount(await directFetch(), servingAccount)
 
-  return sendViaRelay({
-    config: getRelayConfig(storage),
-    input,
-    init,
-    headers,
-    body: bodyText,
-    fallback: directFetch,
-    affinity: relayAffinity,
-  })
+  return stampServingAccount(
+    await sendViaRelay({
+      config: getRelayConfig(storage),
+      input,
+      init,
+      headers,
+      body: bodyText,
+      fallback: directFetch,
+      affinity: relayAffinity,
+    }),
+    servingAccount,
+  )
 }
 
 function quotaSnapshotIsExhausted(
@@ -1219,6 +1243,15 @@ export function streamCortexKitAnthropic(
         storagePath,
         effortTransitions,
       })
+      // Custom streamSimple contract: report the final response before
+      // consuming its body so pi fires `after_provider_response`.
+      await options?.onResponse?.(
+        {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+        },
+        model,
+      )
 
       if (!response.ok) {
         throw new Error(

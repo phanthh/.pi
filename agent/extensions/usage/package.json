@@ -1,0 +1,11 @@
+{
+	"name": "@pi-ext/usage",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "node --test src/tests/*.test.ts"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	}
+}

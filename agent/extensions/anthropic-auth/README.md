@@ -16,6 +16,10 @@ Config defaults to `~/.pi/agent/anthropic-auth.json`. Override it with `PI_ANTHR
 
 Runtime state uses `anthropic-auth-state.json`; sticky routing uses `anthropic-auth-routing-state.json`. Existing state from the packaged extension remains compatible.
 
+## Response headers
+
+Every provider response carries `x-pi-anthropic-auth-account` (`main`, a fallback account id, or `api:<id>`) and is reported through pi's `onResponse` hook, so `after_provider_response` handlers (e.g. the `usage` extension) can attribute `anthropic-ratelimit-unified-*` headers to the serving account.
+
 ## Commands
 
 ```text

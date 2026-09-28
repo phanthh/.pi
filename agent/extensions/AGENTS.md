@@ -37,6 +37,7 @@ extensions/
 | `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, scratch tmux session) |
 | `tmux-subagents` | `tmux_subagent` tool | async child pi sessions in panes + live widget; agent defs in `agents/*.md` |
 | `ttsr` | stream watcher | Time-Traveling Stream Rules: aborts mid-stream on rule violation, injects rule, retries. Rules = md+frontmatter in `rules/`, shadowed by `~/.pi/agent/ttsr` then `.pi/ttsr` |
+| `usage` | footer status + `/usage` | Claude (main + anthropic-auth fallbacks), Codex, OpenCode Go subscription windows; polls TTL-gated via shared `~/.pi/agent/cache/usage.json`, live updates from `after_provider_response` headers + Codex `codex.rate_limits` stream events. Has `README.md`. `pnpm --filter @pi-ext/usage test` |
 | `web-fetch` | `web_fetch` tool | wreq-js TLS impersonation + defuddle extraction |
 | `web-search` | `web_search` tool | SearXNG; base URL from `~/.pi/agent/web-search.json` → `SEARXNG_URL` → localhost:8888 |
 
@@ -46,6 +47,6 @@ extensions/
 - Per-extension runtime config lives in `~/.pi/agent/<name>.json` (read with `getAgentDir()`), not here.
 - Env signals available: `PI_SUBAGENT_DEPTH`, `PI_SUBAGENT_ID` (set by tmux-subagents) — used to change
   behaviour between main session and children.
-- Nontrivial extensions carry their own `README.md` (`bash-guard`, `tmux-subagents`, `ttsr`) — read it
+- Nontrivial extensions carry their own `README.md` (`bash-guard`, `tmux-subagents`, `ttsr`, `usage`) — read it
   before touching them; keep it in sync with behaviour changes.
 - pi API docs: [`extensions.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md), [`tui.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/tui.md), and official examples.

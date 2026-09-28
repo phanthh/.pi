@@ -2,8 +2,7 @@
   "lastChangelogVersion": "0.87.1",
   "theme": "tokyonight",
   "packages": [
-    "npm:pi-mcp-adapter",
-    "npm:@narumitw/pi-usage"
+    "npm:pi-mcp-adapter"
   ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
