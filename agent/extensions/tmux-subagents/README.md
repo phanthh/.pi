@@ -68,6 +68,11 @@ Every child loads `child.ts` via `-e`:
 - `caller_ping` — ask the parent for help, exit; parent can `resume` the session.
 - Ctrl+J toggles the child's identity/tools widget.
 
+A `tools` allowlist (param or frontmatter) is passed as `--tools`, which replaces
+the default selection; `subagent_done`, `caller_ping`, and pi's built-in
+`codemode` are always added, so every child can run codemode scripts and reach
+MCP tools. Without an allowlist, children use `defaultTools` from settings.
+
 ## Bundled agents
 
 | Agent | Model | Role |

@@ -3,7 +3,7 @@ name: scout
 description: Fast read-only codebase evidence gathering; not for analysis or decisions
 model: openai-codex/gpt-6-luna
 thinking: high
-tools: read, bash, lsp, code_exec
+tools: read, bash, lsp, codemode
 system-prompt: replace
 auto-exit: true
 spawning: false

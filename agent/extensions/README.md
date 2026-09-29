@@ -11,7 +11,6 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | `ask` | `ask` tool | Structured text, single-choice, and multi-choice questions |
 | [`anthropic-auth`](anthropic-auth/README.md) | Provider | Anthropic Pro/Max OAuth, Claude models, quota-aware routing, and cache controls |
 | [`bash-guard`](bash-guard/README.md) | Bash hook | Blocks catastrophic commands and optionally prompts for risky ones |
-| `codemode` | `code_exec` tool | Runs type-checked TypeScript orchestration in a QuickJS sandbox |
 | [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and topic cutovers |
 | `cursor-auth` | Provider | Cursor OAuth and model access |
 | `goal` | `goal` tool | Keeps long-running objectives active until completion or drop |
@@ -34,10 +33,9 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-Workspace uses strict TypeScript with source entry points—no normal build step. Run package-specific checks when changing packages that define them:
+`@earendil-works/pi-*` dev dependencies link to a pi source checkout at `~/dev/pi`; build it first (`npm run build`). Workspace uses strict TypeScript with source entry points—no normal build step. Run package-specific checks when changing packages that define them:
 
 ```bash
-pnpm --filter pi-codemode selftest
 pnpm --filter pi-context selftest
 pnpm --filter @pi-ext/project-skill-rules test
 pnpm --filter @pi-ext/usage test

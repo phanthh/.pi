@@ -35,6 +35,7 @@ Hard rules:
 - Proactively complains if there're anything wrong with toolings, the coding environment, etc.. Be vocal.
 - If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
+    - At most 10 subagents can run at once. Any more and `tmux_subagent` will fail.
     - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
     - Use `reviewer` subagents for code review (if requested):

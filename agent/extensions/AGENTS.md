@@ -7,7 +7,7 @@ Personal, global pi extensions. Part of the `phanthh/.pi` dotfiles repo. Everyth
 
 ```
 extensions/
-├── package.json        pnpm workspace root (private, ESM). devDeps: @earendil-works/pi-{ai,coding-agent,tui}, typebox, typescript
+├── package.json        pnpm workspace root (private, ESM). devDeps: @earendil-works/pi-{ai,coding-agent,tui} (link: ~/dev/pi/packages/*), typebox, typescript
 ├── pnpm-workspace.yaml packages: ["*"]  → each subdir is a workspace package
 ├── tsconfig.json       strict, noEmit, ESNext + bundler resolution, allowImportingTsExtensions, include: */src/**/*.ts
 └── <ext>/package.json  { "pi": { "extensions": ["./src/index.ts"] } }  ← how pi picks it up
@@ -28,7 +28,6 @@ extensions/
 | `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
 | `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls; internal auth/account/quota/cache/relay/routing code lives in `src/core` |
 | `bash-guard` | hook on `bash` | subagents: headless hard-block; main session: off by default + irreversible-op floor. `/bash-guard` toggles |
-| `codemode` | `code_exec` tool | type-checked TS program run in QuickJS sandbox; calls pi tools from inside |
 | `context` | `/context`, `/compact`, `/recall`; `recall` + `new_topic` tools | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), topic cutovers, idle-aware compaction (user msg after 5m cache TTL → compact first). Has its own `README.md` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
@@ -49,4 +48,6 @@ extensions/
   behaviour between main session and children.
 - Nontrivial extensions carry their own `README.md` (`bash-guard`, `tmux-subagents`, `ttsr`, `usage`) — read it
   before touching them; keep it in sync with behaviour changes.
-- pi API docs: [`extensions.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md), [`tui.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/tui.md), and official examples.
+- pi runs from source (`~/dev/pi`, `~/.local/bin/pi` → `packages/coding-agent/dist/cli.js`); pi packages are `link:`ed to
+  it, so types track the local build. Rebuild pi (`npm run build` in `~/dev/pi`) before `pnpm check` after pulling.
+- pi API docs: `~/dev/pi/packages/coding-agent/docs/` (`extensions.md`, `tui.md`) and `examples/`.

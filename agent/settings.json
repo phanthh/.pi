@@ -1,9 +1,6 @@
 {
   "lastChangelogVersion": "0.87.1",
   "theme": "tokyonight",
-  "packages": [
-    "npm:pi-mcp-adapter"
-  ],
   "quietStartup": true,
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "always",
@@ -34,9 +31,12 @@
   "hideThinkingBlock": true,
   "showCacheMissNotices": true,
   "enabledModels": [
-    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6.1-sol",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-opus-5-5",
     "opencode-go/space-bunny-free"
+  ],
+  "defaultTools": [
+    "+codemode"
   ]
 }

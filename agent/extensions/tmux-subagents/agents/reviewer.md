@@ -3,7 +3,7 @@ name: reviewer
 description: Read-only critical code reviewer; reports only evidence-backed, actionable findings
 model: anthropic/claude-opus-5-5
 thinking: high
-tools: read, bash, lsp, code_exec, tmux_subagent
+tools: read, bash, lsp, codemode, tmux_subagent
 system-prompt: replace
 auto-exit: true
 spawning: true

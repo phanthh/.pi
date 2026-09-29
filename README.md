@@ -18,7 +18,7 @@ See [agent/extensions](agent/extensions/README.md) for the full extension list a
 
 ## Install
 
-Requirements: [pi](https://pi.dev), Node.js 22.19+, [pnpm](https://pnpm.io), Git, and tmux. Optional features also use `gh`, `ast-grep`, language servers, and a local [SearXNG](https://docs.searxng.org) instance.
+Requirements: [pi](https://pi.dev) built from source at `~/dev/pi` (`npm run build` there), Node.js 22.19+, [pnpm](https://pnpm.io), Git, and tmux. Optional features also use `gh`, `ast-grep`, language servers, and a local [SearXNG](https://docs.searxng.org) instance.
 
 Back up any existing `~/.pi` directory, then:
 

@@ -7,9 +7,9 @@
 		"test:anthropic-auth": "pnpm --filter @pi-ext/anthropic-auth test"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "catalog:",
-		"@earendil-works/pi-coding-agent": "catalog:",
-		"@earendil-works/pi-tui": "catalog:",
+		"@earendil-works/pi-ai": "link:../../../dev/pi/packages/ai",
+		"@earendil-works/pi-coding-agent": "link:../../../dev/pi/packages/coding-agent",
+		"@earendil-works/pi-tui": "link:../../../dev/pi/packages/tui",
 		"@types/node": "catalog:",
 		"typebox": "catalog:",
 		"typescript": "catalog:"

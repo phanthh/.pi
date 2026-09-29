@@ -185,7 +185,8 @@ function loadAgentDefaults(agentName: string): AgentDefinition | null {
 
 /** Tools gated by `spawning: false`. */
 const SPAWNING_TOOLS = new Set(["tmux_subagent"]);
-const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done"] as const;
+// codemode is pi's built-in script tool; MCP tools are only reachable through it.
+const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done", "codemode"] as const;
 
 function resolveDenyTools(agentDefs: AgentDefaults | null): Set<string> {
   const denied = new Set<string>();
@@ -197,7 +198,7 @@ function resolveDenyTools(agentDefs: AgentDefaults | null): Set<string> {
   return denied;
 }
 
-/** Child `--tools` allowlist always keeps the control tools reachable. */
+/** Child `--tools` allowlist always keeps the control tools and codemode reachable. */
 export function buildChildToolAllowlist(effectiveTools?: string): string | null {
   const requested = (effectiveTools ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   if (requested.length === 0) return null;
