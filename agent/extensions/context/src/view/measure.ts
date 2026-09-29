@@ -578,7 +578,13 @@ function measureSkills(
 ): void {
 	const sectionSpan = findSkillsSpan(base);
 	if (sectionSpan === undefined) return;
+	const entities: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
+	const renderedPaths = new Set(
+		Array.from(base.slice(sectionSpan.start, sectionSpan.end).matchAll(/<location>([\s\S]*?)<\/location>/g),
+			(match) => match[1].replace(/&(?:amp|lt|gt|quot|apos);/g, (entity) => entities[entity])),
+	);
 	const children = (options.skills ?? [])
+		.filter((skill) => renderedPaths.has(skill.filePath))
 		.map((skill) => createItem(
 			`skill:${skill.name}`,
 			"skills",

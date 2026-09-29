@@ -20,7 +20,8 @@ import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } 
 import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
 import { runReflector } from "./reflector.ts";
 import { buildTranscript } from "./transcript.ts";
-import { mergeLateInjectedMessage } from "./view/capture.ts";
+import { buildNativeSnapshot, InitialCaptureState, mergeLateInjectedMessage } from "./view/capture.ts";
+import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
 import { CONFIG_FILE_NAME as VIEW_CONFIG_FILE_NAME, DEFAULT_CONFIG as VIEW_DEFAULT_CONFIG, getConfigFilePath } from "./view/config.ts";
 import { parseContextCommand } from "./view/command.ts";
 import { buildSnapshot } from "./view/model.ts";
@@ -109,6 +110,30 @@ const extensions = computeUsage({ snapshot: injectedSnapshot, messages: [] })
   .categories.find((category) => category.id === "extensions");
 assert.equal(extensions?.children?.[0]?.label, "cursor-session-instructions");
 assert.equal(extensions?.children?.[0]?.entries?.[0]?.text, "hidden policy");
+
+// ── filtered skills in current and initial context views ────────────────────
+{
+  const skills: Skill[] = ["allowed", "blocked", "path&<>\"'"].map((name) => ({
+    name, description: name, filePath: `/project/skills/${name}/SKILL.md`, baseDir: "/project/skills",
+    sourceInfo: { source: "local", path: "/project/skills", scope: "project", origin: "top-level" },
+    disableModelInvocation: false,
+  }));
+  const options = { cwd: "/project", skills };
+  const prompt = formatSkillsForPrompt(skills.filter((skill) => skill.name !== "blocked"));
+  const input = { systemPrompt: prompt, options, allTools: [], activeToolNames: [] };
+  const native = buildNativeSnapshot(input);
+  const capture = new InitialCaptureState();
+  capture.prepare(options, formatSkillsForPrompt(skills));
+  const initial = capture.finalize(() => ({
+    ...input, messages: [], baselineMessages: [], origin: "real-turn",
+  }))!;
+  for (const snapshot of [native, initial]) {
+    const item = snapshot.groups.flatMap((group) => group.items).find((item) => item.id === "skills");
+    assert.deepEqual(item?.children?.map((child) => child.label).sort(), ["allowed", "path&<>\"'"]);
+    assert.equal(item?.label, "Skills (2)");
+    assert.equal(item?.tokens, item?.children?.reduce((sum, child) => sum + child.tokens, 0));
+  }
+}
 
 // ── parser ──────────────────────────────────────────────────────────────────
 const labels = new Set(["e1", "e2"]);

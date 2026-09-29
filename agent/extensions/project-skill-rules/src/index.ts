@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentDir, loadSkillsFromDir, type ExtensionAPI, type Skill } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
 export interface SkillRule {
 	path: string | string[];
@@ -123,6 +124,26 @@ function globalSkillNames(): ReadonlySet<string> {
 	return new Set(loadSkillsFromDir({ dir: GLOBAL_SKILLS_DIR, source: "user" }).skills.map((skill) => skill.name));
 }
 
+export function filterSkillAutocomplete(
+	current: AutocompleteProvider,
+	allowedSkills: () => ReadonlySet<string> | undefined,
+): AutocompleteProvider {
+	return {
+		triggerCharacters: current.triggerCharacters,
+		async getSuggestions(...args) {
+			const result = await current.getSuggestions(...args);
+			if (!result || !/^\/[^/\s]*$/.test(result.prefix)) return result;
+			const allowed = allowedSkills();
+			const items = result.items.filter((item) =>
+				!item.value.startsWith("skill:") || permits(allowed, item.value.slice("skill:".length)),
+			);
+			return items.length > 0 ? { ...result, items } : null;
+		},
+		applyCompletion: (...args) => current.applyCompletion(...args),
+		shouldTriggerFileCompletion: current.shouldTriggerFileCompletion?.bind(current),
+	};
+}
+
 export default function projectSkillRules(pi: ExtensionAPI): void {
 	let reportedError: string | undefined;
 
@@ -140,6 +161,15 @@ export default function projectSkillRules(pi: ExtensionAPI): void {
 			return new Set();
 		}
 	}
+
+	pi.on("session_start", (_event, ctx) => {
+		ctx.ui.addAutocompleteProvider((current) => filterSkillAutocomplete(current, () => {
+			const allowed = allowedFor(ctx.cwd, (message) => ctx.ui.notify(message, "error"));
+			return allowed === undefined || allowed.has("*")
+				? allowed
+				: new Set([...allowed, ...globalSkillNames()]);
+		}));
+	});
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const allowed = allowedFor(ctx.cwd, (message) => ctx.ui.notify(message, "error"));

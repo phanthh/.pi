@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findAllowedSkills, isGlobalSkill, parseConfig, type SkillRulesConfig } from "./index.ts";
+import { CombinedAutocompleteProvider, type AutocompleteProvider } from "@earendil-works/pi-tui";
+import { filterSkillAutocomplete, findAllowedSkills, isGlobalSkill, parseConfig, type SkillRulesConfig } from "./index.ts";
 
 const config: SkillRulesConfig = {
 	rules: [
@@ -63,6 +64,47 @@ test("rejects invalid path arrays and regex", () => {
 
 test("leaves skills unrestricted when no rule matches", () => {
 	assert.equal(findAllowedSkills("/tmp/project", { rules: [] }, "/home/me"), undefined);
+});
+
+test("filters slash autocomplete and re-reads the allowlist", async () => {
+	const current = new CombinedAutocompleteProvider([
+		{ name: "help" }, { name: "skill:allowed" }, { name: "skill:blocked" }, { name: "skill:global" },
+	], "/tmp");
+	let allowed: ReadonlySet<string> | undefined = new Set(["allowed", "global"]);
+	const provider = filterSkillAutocomplete(current, () => allowed);
+	const options = { signal: new AbortController().signal };
+	assert.deepEqual((await provider.getSuggestions(["/"], 0, 1, options))?.items.map((item) => item.value),
+		["help", "skill:allowed", "skill:global"]);
+	assert.equal(await provider.getSuggestions(["/blocked"], 0, 8, options), null);
+	const item = { value: "skill:allowed", label: "skill:allowed" };
+	assert.deepEqual(provider.applyCompletion(["/"], 0, 1, item, "/"),
+		current.applyCompletion(["/"], 0, 1, item, "/"));
+
+	allowed = new Set(["global"]);
+	assert.deepEqual((await provider.getSuggestions(["/"], 0, 1, options))?.items.map((item) => item.value),
+		["help", "skill:global"]);
+	allowed = undefined;
+	assert.deepEqual(await provider.getSuggestions(["/"], 0, 1, options),
+		await current.getSuggestions(["/"], 0, 1, options));
+	allowed = new Set(["*"]);
+	assert.deepEqual(await provider.getSuggestions(["/"], 0, 1, options),
+		await current.getSuggestions(["/"], 0, 1, options));
+});
+
+test("leaves path and argument completions unchanged", async () => {
+	const result = { prefix: "/tmp/", items: [{ value: "skill:file", label: "file" }] };
+	const current: AutocompleteProvider = {
+		triggerCharacters: ["@"],
+		getSuggestions: async () => result,
+		applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+		shouldTriggerFileCompletion: () => true,
+	};
+	const provider = filterSkillAutocomplete(current, () => { throw new Error("not a slash command"); });
+	assert.equal(await provider.getSuggestions(["/tmp/"], 0, 5, { signal: new AbortController().signal }), result);
+	result.prefix = "/command ";
+	assert.equal(await provider.getSuggestions(["/command "], 0, 9, { signal: new AbortController().signal }), result);
+	assert.deepEqual(provider.triggerCharacters, ["@"]);
+	assert.equal(provider.shouldTriggerFileCompletion?.([""], 0, 0), true);
 });
 
 test("recognizes only skills inside the global skills directory", () => {

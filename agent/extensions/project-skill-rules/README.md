@@ -18,4 +18,4 @@ Configure `~/.pi/agent/project-skill-rules.json`:
 
 Empty skill list disables all non-global skills; `"*"` allows all. No matching rule leaves skills unrestricted. Config is read on every prompt, so edits need no reload.
 
-Extension removes disallowed non-global skills from model's system prompt and blocks explicit `/skill:name` expansion. Global skills remain available even when config is invalid and fail-closed. Pi extensions cannot filter core skill discovery, so disallowed skills may still appear in slash-command autocomplete. They cannot be invoked through Pi's skill mechanism.
+Extension removes disallowed non-global skills from model's system prompt, hides them from slash-command autocomplete, and blocks explicit `/skill:name` expansion. Global skills remain available even when config is invalid and fail-closed. Autocomplete re-reads config for each suggestion request. Core discovery still includes all skills; filtering applies to their presentation and invocation.

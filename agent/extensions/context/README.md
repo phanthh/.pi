@@ -88,7 +88,7 @@ The effective window is `min(model.contextWindow, overrideMaxTokens)`, so the se
 - `/context reload` — reload global + trusted project OM config.
 - `/context config` — create context-view color overrides at `~/.pi/agent/extensions/context-view.json`.
 
-Usage/injection views passively capture initial context and add no model-context instructions. Before the first real turn, opening a view may run one silent empty-message probe. Pi exposes no extension contribution API for built-in `/settings`, so OM uses `/context settings`.
+Usage/injection views count only skill records present in the rendered prompt, even when later extension hooks filter the startup skill list. They passively capture initial context and add no model-context instructions. Before the first real turn, opening a view may run one silent empty-message probe. Pi exposes no extension contribution API for built-in `/settings`, so OM uses `/context settings`.
 
 ## Recall
 
