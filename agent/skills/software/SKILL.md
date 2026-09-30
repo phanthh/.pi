@@ -19,4 +19,4 @@ Mindset (what you build — YAGNI extremist, deletion before addition):
 - Two same-size stdlib options → take edge-case-correct one. Less code ≠ flimsier algorithm.
 - Never simplify away: trust-boundary validation, error handling preventing data loss, security, accessibility, hardware calibration (real clock drifts, real sensor reads off), anything explicitly requested. User insists on full version → build it, no re-arguing.
 - Non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check: assert demo/self-check or one small test file. No frameworks, no fixtures. Trivial one-liners: no test — YAGNI applies to tests too.
-- Note: skills/prompts/instructions are essentially "software" that is run on LLM/AI. Apply the above rules for skills/prompts/instructions as well.
+- Note: skills/prompts/instructions are essentially "software" that is run by LLMs/AI. Apply the above rules for skills/prompts/instructions as well.
