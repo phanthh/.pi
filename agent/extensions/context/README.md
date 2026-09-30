@@ -1,6 +1,6 @@
 # context
 
-Monolithic context management extension: context usage/injection visualization, deterministic compaction, recall, full observational memory (OM), topic cutovers, and idle-aware compaction.
+Monolithic context management extension: context usage/injection visualization, deterministic compaction, recall, full observational memory (OM), and idle-aware compaction.
 
 All implementation lives in this package. Compaction internals are under `src/compact/`; no separate compact package or extension is loaded.
 
@@ -93,16 +93,6 @@ Usage/injection views count only skill records present in the rendered prompt, e
 ## Recall
 
 `recall` and `/recall` search active-lineage transcript history by default; use `scope:all` for other branches. Results automatically include observations and reflections sourced from displayed transcript entries, including dropped-observation markers. A 12-character bracketed or bare memory ID resolves an observation/reflection directly and returns its supporting source entries.
-
-## `new_topic`
-
-`new_topic` is always active. It ends current run; the `agent_end` hook compacts with `keep:1`, then invisibly resumes without duplicating latest user message. No internal slash command is exposed:
-
-```text
-new_topic → turn ends → compact keep:1 → invisible continue
-```
-
-Use only for sharp topic cutovers, never follow-ups or subtasks. `/recall` still reaches compacted history.
 
 ## Idle-aware compaction
 

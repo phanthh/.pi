@@ -4,7 +4,6 @@ import { registerRecallCommand } from "./commands/recall.ts";
 import { registerRecallTool } from "./tools/recall.ts";
 
 export type { CompactRegistrationOptions, CompactionEnrichment } from "./hooks/before-compact.ts";
-export { COMPACT_MARKER, triggerInvisibleContinue } from "./hooks/before-compact.ts";
 export { renderMessage, type RenderedEntry } from "./core/render-entries.ts";
 
 /**

@@ -14,7 +14,6 @@ import { applyConfig, DEFAULT_CONFIG } from "./config.ts";
 import { maxDropCountForPool, runDropper, selectDropCandidates } from "./dropper.ts";
 import { estimateTokens, hashId, MEMORY_END, MEMORY_START, OM_OBSERVATIONS_DROPPED, OM_OBSERVATIONS_RECORDED, OM_REFLECTIONS_RECORDED, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
 import { IDLE_COMPACT_AFTER_MS, lastCacheTouchMs, registerIdleCompact } from "./idle-compact.ts";
-import { registerNewTopic } from "./new-topic.ts";
 import { registerOm } from "./om.ts";
 import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } from "./parse.ts";
 import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
@@ -428,77 +427,6 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
   branch = [...onTrunk, { id: "L1", type: "custom", customType: OM_OBSERVATIONS_RECORDED, data: { coversUpToId: "a9", observations: [] } }];
   handlers.get("session_tree")?.({}, ctx);
   assert.equal(om.metrics(ctx as any).observer.current, expected, "stray off-branch cursor keeps last on-branch cursor");
-}
-
-// ── new_topic orchestration ─────────────────────────────────────────────────
-const newTopicHarness = () => {
-  const eventHandlers = new Map<string, (...args: any[]) => unknown>();
-  let tool: any;
-  const sentMessages: Array<{ message: unknown; options: unknown }> = [];
-  const pi = {
-    on: (name: string, handler: (...args: any[]) => unknown) => eventHandlers.set(name, handler),
-    registerTool: (definition: unknown) => { tool = definition; },
-    sendMessage: (message: unknown, options: unknown) => { sentMessages.push({ message, options }); },
-  };
-  registerNewTopic(pi as any, {
-    compactMarker: "__algo_compact__",
-    triggerInvisibleContinue: (extensionPi) => {
-      extensionPi.sendMessage(
-        { customType: "auto-continue", content: [], display: false },
-        { triggerTurn: true, deliverAs: "followUp" },
-      );
-    },
-  });
-  return { eventHandlers, getTool: () => tool, sentMessages };
-};
-
-{
-  const harness = newTopicHarness();
-  const tool = harness.getTool();
-  const first = await tool.execute();
-  assert.equal(first.terminate, true, "new_topic terminates active run before compaction");
-  const duplicate = await tool.execute();
-  assert.equal(duplicate.terminate, true, "duplicate cutovers remain guarded");
-
-  let compactOptions: any;
-  const ctx = {
-    compact: (options: unknown) => { compactOptions = options; },
-    ui: { notify: () => {} },
-  };
-  await harness.eventHandlers.get("agent_end")?.({}, ctx);
-  assert.equal(compactOptions.customInstructions, "__algo_compact__ keep:1");
-  compactOptions.onComplete();
-  assert.equal(harness.sentMessages.length, 1, "successful compaction queues invisible continuation");
-  assert.equal((await tool.execute()).terminate, true, "completion clears duplicate guard");
-}
-
-{
-  const harness = newTopicHarness();
-  const tool = harness.getTool();
-  await tool.execute();
-  let compactOptions: any;
-  await harness.eventHandlers.get("agent_end")?.({}, {
-    compact: (options: unknown) => { compactOptions = options; },
-    ui: { notify: () => {} },
-  });
-  compactOptions.onError(new Error("boom"));
-  assert.equal((await tool.execute()).terminate, true, "compaction failure clears duplicate guard");
-
-  await harness.eventHandlers.get("session_shutdown")?.({}, {});
-  assert.equal((await tool.execute()).terminate, true, "shutdown clears duplicate guard");
-}
-
-{
-  const harness = newTopicHarness();
-  await harness.getTool().execute();
-  let compactOptions: any;
-  await harness.eventHandlers.get("agent_end")?.({}, {
-    compact: (options: unknown) => { compactOptions = options; },
-    ui: { notify: () => {} },
-  });
-  await harness.eventHandlers.get("session_shutdown")?.({}, {});
-  compactOptions.onComplete();
-  assert.equal(harness.sentMessages.length, 0, "late compaction callback cannot continue a closed session");
 }
 
 // ── idle-aware compaction ───────────────────────────────────────────────────

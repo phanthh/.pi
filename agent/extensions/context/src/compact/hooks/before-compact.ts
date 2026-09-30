@@ -47,7 +47,7 @@ let pendingAutoContinueTimer: ReturnType<typeof setTimeout> | null = null;
 // simply continues from the compaction summary.
 export const AUTO_CONTINUE_CUSTOM_TYPE = "auto-continue";
 
-export const triggerInvisibleContinue = (pi: ExtensionAPI): void => {
+const triggerInvisibleContinue = (pi: ExtensionAPI): void => {
   pi.sendMessage(
     {
       customType: AUTO_CONTINUE_CUSTOM_TYPE,

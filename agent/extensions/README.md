@@ -11,7 +11,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | `ask` | `ask` tool | Structured text, single-choice, and multi-choice questions |
 | [`anthropic-auth`](anthropic-auth/README.md) | Provider | Anthropic Pro/Max OAuth, Claude models, quota-aware routing, and cache controls |
 | [`bash-guard`](bash-guard/README.md) | Bash hook | Blocks catastrophic commands and optionally prompts for risky ones |
-| [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and topic cutovers |
+| [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and idle-aware compaction |
 | `cursor-auth` | Provider | Cursor OAuth and model access |
 | `goal` | `goal` tool | Keeps long-running objectives active until completion or drop |
 | `idle-timer` | Footer status | `💤 3m12s` since agent settled or a blocking prompt opened |
