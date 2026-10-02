@@ -1,0 +1,11 @@
+{
+	"name": "@pi-ext/up-history",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "node --experimental-strip-types src/selftest.ts"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	}
+}

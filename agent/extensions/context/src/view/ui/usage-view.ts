@@ -50,6 +50,7 @@ import {
 import { BlockNavigator, layoutPreviewBlocks, type PreviewLayout } from "./usage-preview.ts";
 import { DEFAULT_WHEEL_SCROLL_LINES, parseWheelDirection, readWheelScrollLines } from "./wheel.ts";
 import type { OmGauge, OmMetrics } from "../../om.ts";
+import type { LiveContextStatus } from "../../live/index.ts";
 
 const USAGE_DESCRIPTION = "Estimated context for the next model request. " +
 	"Token counts are approximate and may differ from the provider's estimate.";
@@ -103,6 +104,7 @@ export interface UsageViewInput {
 	/** Completed compactions on the current session branch, including ancestors. */
 	readonly compactionCount: number;
 	readonly memory: OmMetrics;
+	readonly liveContext?: LiveContextStatus;
 	readonly degradedReason?: string;
 	/** Non-fatal problems shown under the header, such as ignored configuration entries. */
 	readonly notices?: readonly string[];
@@ -319,6 +321,7 @@ export class UsageView {
 		const prefix = [
 			border, "", ...this.headerLines(width),
 			this.fit(theme.fg("muted", `Compactions: ${this.input.compactionCount}`), width),
+			...this.liveContextLines(width, terminalRows),
 			"", ...notices,
 		];
 		const memory = this.memoryLines(width);
@@ -388,6 +391,24 @@ export class UsageView {
 			return [spreadLine(title, summary, width)];
 		}
 		return [this.fit(title, width), "", this.fit(summary, width)];
+	}
+
+	/** Bounded live status inside the existing dashboard; short terminals keep only its summary. */
+	private liveContextLines(width: number, terminalRows: number): string[] {
+		const status = this.input.liveContext;
+		if (status === undefined) return [];
+		const availability = status.available ? "" : " · unavailable";
+		const summary = `Live Context: ${status.enabled ? "on" : "off"} · ${status.edits} edits${availability}`;
+		const lines = [this.fit(this.theme.fg("muted", normalizeInlineText(summary)), width)];
+		if (terminalRows < 24) return lines;
+		for (const [label, value, color] of [
+			["File", status.path, "dim"],
+			["Last result", status.lastResult, "muted"],
+			["Error", status.error, "error"],
+		] as const) {
+			if (value) lines.push(this.fit(this.theme.fg(color, `${BODY_INDENT}${label}: ${normalizeInlineText(value)}`), width));
+		}
+		return lines;
 	}
 
 	/** Responsive observational-memory summary and progress gauges. */

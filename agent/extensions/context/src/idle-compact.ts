@@ -7,8 +7,8 @@
  * so compaction completes before the prompt is built. Any failure (too little
  * context, user abort) lets the message through unchanged.
  */
-import { estimateTokens, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildOwnCut, COMPACT_MARKER, formatCompactionStats, getLastCompactionStats } from "./compact/hooks/before-compact.ts";
+import { estimateTokens, SettingsManager, type ExtensionAPI, type ExtensionContext, type SessionManager } from "@earendil-works/pi-coding-agent";
+import { buildOwnCut, COMPACT_MARKER, formatCompactionStats, getLastCompactionStats, projectedCompactionEntries } from "./compact/hooks/before-compact.ts";
 
 /** Default prompt-cache TTL for most providers (Anthropic ephemeral, OpenAI). */
 export const IDLE_COMPACT_AFTER_MS = 5 * 60_000;
@@ -33,9 +33,10 @@ export const lastCacheTouchMs = (entries: readonly BranchEntry[]): number | unde
  * conversation exceeds keepRecentTokens, and pi reports that as a visible error.
  * System prompt entries count toward pi's kept tail but are never summarized.
  */
-export const hasEnoughToCompact = (branch: readonly BranchEntry[], keepRecentTokens: number): boolean => {
+export const hasEnoughToCompact = (branch: readonly BranchEntry[], keepRecentTokens: number, useLiveCheckpoint = false): boolean => {
   if (branch.at(-1)?.type === "compaction") return false;
-  const live = buildOwnCut(branch as any[], 0);
+  const { entries } = projectedCompactionEntries(branch as ReturnType<SessionManager["getBranch"]>, useLiveCheckpoint);
+  const live = buildOwnCut(entries, 0);
   if (!live.ok) return false;
   const tokens = live.messages.reduce(
     (sum: number, message: any) => (message.role === "system" ? sum : sum + estimateTokens(message)),
@@ -49,7 +50,11 @@ const keepRecentTokens = (ctx: ExtensionContext): number =>
 
 export const registerIdleCompact = (
   pi: ExtensionAPI,
-  { now = Date.now, keepTokens = keepRecentTokens }: { now?: () => number; keepTokens?: (ctx: ExtensionContext) => number } = {},
+  { now = Date.now, keepTokens = keepRecentTokens, liveEnabled = () => false }: {
+    now?: () => number;
+    keepTokens?: (ctx: ExtensionContext) => number;
+    liveEnabled?: (ctx: ExtensionContext) => boolean;
+  } = {},
 ) => {
   pi.on("input", async (event, ctx) => {
     if (event.source === "extension" || !ctx.isIdle()) return;
@@ -58,7 +63,12 @@ export const registerIdleCompact = (
     if (last === undefined) return;
     const idleMs = now() - last;
     if (idleMs < IDLE_COMPACT_AFTER_MS) return;
-    if (!hasEnoughToCompact(branch, keepTokens(ctx))) return;
+    try {
+      if (!hasEnoughToCompact(branch, keepTokens(ctx), liveEnabled(ctx))) return;
+    } catch (cause) {
+      ctx.ui.notify(`context: idle compaction skipped; live projection unavailable: ${String(cause)}`, "warning");
+      return;
+    }
 
     const idle = `${Math.round(idleMs / 60_000)}m`;
     await new Promise<void>((resolve) => {

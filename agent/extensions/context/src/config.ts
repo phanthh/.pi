@@ -1,4 +1,4 @@
-/** OM config: global ~/.pi/agent/om.json plus trusted project .pi/om.json. */
+/** Context config: global ~/.pi/agent/om.json plus trusted project .pi/om.json. */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -6,6 +6,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 export interface OmModelRef { provider: string; id: string }
 
 export interface OmConfig {
+  liveContext: { mode: "off" | "main" | "all" };
   /** Shared worker model; stage-specific models win. */
   model: OmModelRef | null;
   observerModel: OmModelRef | null;
@@ -28,6 +29,7 @@ export interface OmConfig {
 }
 
 export const DEFAULT_CONFIG: OmConfig = {
+  liveContext: { mode: "off" },
   model: null,
   observerModel: null,
   reflectorModel: null,
@@ -89,7 +91,12 @@ const readModels = (value: unknown): OmModelRef[] | undefined => {
 
 /** Apply known valid fields; unknown/invalid fields are ignored. */
 export const applyConfig = (base: OmConfig, raw: Record<string, unknown>): OmConfig => {
-  const next: OmConfig = { ...base };
+  const next: OmConfig = { ...base, liveContext: { ...base.liveContext } };
+  const liveContext = raw.liveContext;
+  if (liveContext && typeof liveContext === "object" && !Array.isArray(liveContext)) {
+    const mode = (liveContext as Record<string, unknown>).mode;
+    if (mode === "off" || mode === "main" || mode === "all") next.liveContext.mode = mode;
+  }
   if (typeof raw.sessionFallback === "boolean") next.sessionFallback = raw.sessionFallback;
   for (const key of MODEL_KEYS) {
     const model = readModel(raw[key]);

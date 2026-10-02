@@ -15,8 +15,8 @@
  *   parts System Prompt presents as sub-items. A `before_agent_start` handler
  *   may relocate the two tool-surface blocks past pi's footer, so blocks are
  *   located independently and ordered by where they ended up
- * - the "Current working directory" footer (pi 0.81), optionally preceded by a
- *   "Current date" line (pi 0.80), closes pi's own prompt: pi sends it with
+ * - the <cwd> footer (or legacy "Current working directory" line, optionally
+ *   preceded by a "Current date" line) closes pi's own prompt: pi sends it with
  *   every request, so it is measured as the Current Dir part. Text after it
  *   is an extension addition unless it is a structurally recovered tool block.
  */
@@ -106,6 +106,8 @@ export function analyzeSystemPrompt(
 
 	const footer = findBasePromptFooter(systemPrompt, options.cwd);
 	const base = footer === undefined ? systemPrompt : systemPrompt.slice(0, footer.start);
+	const liveSpan = findDelimitedSpan(systemPrompt, "<live_context>", "</live_context>");
+	if (liveSpan !== undefined && liveSpan.end <= base.length) carvedSpans.push(liveSpan);
 
 	const usesCustomPrompt = options.customPrompt !== undefined && options.customPrompt.length > 0;
 	// Exclude separately attributed content before looking for headers inside it
@@ -133,9 +135,11 @@ export function analyzeSystemPrompt(
 			carvedSpans,
 			promptLines.carved,
 		);
+	const excluded = [...tailBlocks, ...(liveSpan === undefined ? [] : [liveSpan])]
+		.sort((a, b) => a.start - b.start);
 	const references = footer === undefined
 		? []
-		: measurePromptAdditions(systemPrompt, footer.end, { ...additions, excluded: tailBlocks }, items);
+		: measurePromptAdditions(systemPrompt, footer.end, { ...additions, excluded }, items);
 
 	const parts = blocks;
 	if (appended !== undefined) {
@@ -144,6 +148,12 @@ export function analyzeSystemPrompt(
 	if (footer !== undefined) {
 		const text = systemPrompt.slice(footer.start, footer.end);
 		parts.push({ id: "base-prompt:current-dir", kind: "base-prompt", label: "Current Dir", text });
+	}
+	if (liveSpan !== undefined) {
+		parts.push({
+			id: "base-prompt:live-context", kind: "base-prompt", label: "Live Context",
+			text: systemPrompt.slice(liveSpan.start, liveSpan.end),
+		});
 	}
 	if (references.length > 0) {
 		parts.push({
@@ -886,15 +896,18 @@ interface Span {
 }
 
 /**
- * Locate pi's dynamic CWD footer so it can be excluded from System Prompt and
- * extension additions. Pi 0.81 emits only the "Current working directory"
- * line; pi 0.80 preceded it with a "Current date" line, still recognized for
- * compatibility. The CWD line must match the exact resolved cwd on a complete
- * line (preceded by "\n", followed by "\n" or end of prompt) so ordinary
- * prompt text mentioning the cwd is not mistaken for the footer.
+ * Locate pi's <cwd> footer, retaining support for the legacy CWD/date lines.
+ * Match the exact resolved cwd on complete lines so ordinary prompt text
+ * mentioning the cwd is not mistaken for the footer.
  */
 function findBasePromptFooter(systemPrompt: string, cwd: string): Span | undefined {
 	const promptCwd = cwd.replace(/\\/g, "/");
+	const xmlFooter = `\n<cwd>\n${promptCwd}\n</cwd>`;
+	const xmlStart = systemPrompt.lastIndexOf(xmlFooter);
+	if (xmlStart !== -1) {
+		const end = xmlStart + xmlFooter.length;
+		if (end === systemPrompt.length || systemPrompt[end] === "\n") return { start: xmlStart, end };
+	}
 	const cwdLine = `\nCurrent working directory: ${promptCwd}`;
 	let cwdStart = systemPrompt.lastIndexOf(cwdLine);
 	while (cwdStart !== -1) {

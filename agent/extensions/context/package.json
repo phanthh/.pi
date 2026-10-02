@@ -6,6 +6,6 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"scripts": {
-		"selftest": "node --experimental-strip-types src/selftest.ts"
+		"selftest": "node --experimental-strip-types src/selftest.ts && node --experimental-strip-types src/live/document-selftest.ts && node --experimental-strip-types src/live/projection-selftest.ts && node --experimental-strip-types src/live/runtime-selftest.ts && node --experimental-strip-types src/live/sdk-selftest.ts && node --experimental-strip-types src/live/ui-selftest.ts && node --experimental-strip-types src/compact/core/projected-compaction-selftest.ts"
 	}
 }

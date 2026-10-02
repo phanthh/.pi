@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionManager } from "@earendil-works/pi-coding-agent";
+import { buildSessionProjection, convertToLlm } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize.ts";
 import { parseKeepAndPrompt, COMPACT_MARKER } from "../core/compact-args.ts";
@@ -8,6 +8,7 @@ import { calibrateCharsPerToken, estimateMessageContentChars, estimateMessageCon
 import type { CompactionDetails } from "../details.ts";
 import type { CompactionReason } from "../types.ts";
 import type { RecallAugmenter, RecallResolver } from "../tools/recall.ts";
+import { latestCheckpoint, projectCheckpoint } from "../../live/projection.ts";
 
 export { COMPACT_MARKER } from "../core/compact-args.ts";
 
@@ -475,6 +476,21 @@ const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
   too_few_live_messages: "compact: Too few messages to compact",
 };
 
+export function projectedCompactionEntries(branchEntries: ReturnType<SessionManager["getBranch"]>, useLiveCheckpoint = false) {
+  const raw = buildSessionProjection(branchEntries);
+  const checkpoint = useLiveCheckpoint ? latestCheckpoint(branchEntries, raw) : undefined;
+  const projection = projectCheckpoint(raw, checkpoint);
+  const previousSummary = checkpoint
+    ? projection.messages.findLast((message) => message.role === "compactionSummary")?.summary
+    : undefined;
+  const entries = projection.entries.flatMap(({ sourceEntry, messages }) =>
+    messages.filter((message) => message.role !== "compactionSummary").map((message) => ({
+      ...sourceEntry, type: "message" as const, message,
+    })),
+  );
+  return { entries, checkpointActive: checkpoint !== undefined, previousSummary };
+}
+
 export interface CompactionEnrichment {
   /** Summary text produced by the deterministic compactor. */
   summary: string;
@@ -482,6 +498,7 @@ export interface CompactionEnrichment {
 }
 
 export interface CompactRegistrationOptions {
+  liveEnabled?: (ctx: ExtensionContext) => boolean;
   /**
    * Last-chance rewrite of the compaction result (e.g. re-injecting observational
    * memory). Return undefined to keep the deterministic result unchanged.
@@ -522,15 +539,19 @@ export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegi
     pendingFollowUpPrompt = null;
     if (!isMarkerCompact && !settings.overrideDefaultCompaction) return;
 
-    const calibrationCut = buildOwnCut(branchEntries as any[], 0);
+    // The projection selects the active window and applies native edits and,
+    // for idle compaction, the accepted live-context checkpoint.
+    const { entries: projectedEntries, checkpointActive, previousSummary: livePreviousSummary } = projectedCompactionEntries(branchEntries, isMarkerCompact && !keepUserTurnsExplicit && options.liveEnabled?.(ctx) === true);
+    const previousSummary = checkpointActive ? livePreviousSummary : preparation.previousSummary;
+    const calibrationCut = buildOwnCut(projectedEntries, 0);
     const calibrationMessageChars = calibrationCut.ok
       ? calibrationCut.messages.reduce(
           (sum: number, message: any) => sum + estimateMessageContentChars(message.content),
           0,
         )
       : 0;
-    const calibrationSummaryChars = typeof preparation.previousSummary === "string"
-      ? preparation.previousSummary.length
+    const calibrationSummaryChars = typeof previousSummary === "string"
+      ? previousSummary.length
       : 0;
     const tokenEstimate = calibrateCharsPerToken(
       calibrationMessageChars + calibrationSummaryChars,
@@ -539,44 +560,29 @@ export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegi
 
     // Smart keep-tail: boost default keep when the tail is small.
     // Explicit keep:N from the user is always respected (resolver no-ops).
-    const smartKeep = resolveSmartKeepUserTurns({
-      branchEntries: branchEntries as any[],
-      requestedKeepUserTurns: keepUserTurnsExplicit ? keepUserTurns : null,
-      explicit: keepUserTurnsExplicit,
-      smartKeepTail: settings.smartKeepTail,
-      charsPerToken: tokenEstimate.charsPerToken,
-    });
-    let ownCut = buildOwnCut(branchEntries as any[], smartKeep.keepUserTurns);
+    const smartKeep = checkpointActive
+      ? { keepUserTurns: 0, smartAdjusted: false, fromKeep: keepUserTurns }
+      : resolveSmartKeepUserTurns({
+        branchEntries: projectedEntries,
+        requestedKeepUserTurns: keepUserTurnsExplicit ? keepUserTurns : null,
+        explicit: keepUserTurnsExplicit,
+        smartKeepTail: settings.smartKeepTail,
+        charsPerToken: tokenEstimate.charsPerToken,
+      });
+    // Native compaction retains raw entries after firstKeptEntryId. With a live
+    // checkpoint, retaining that raw tail would resurrect omitted/replaced text.
+    // Summarize the entire projected window and retain no pre-compaction raw tail.
+    let ownCut = buildOwnCut(projectedEntries, checkpointActive ? 0 : smartKeep.keepUserTurns);
     // Default path only: rescue autonomous / oversized-tail sessions with a
     // token-budget cut. Explicit keep:N is respected absolutely (no-op here).
-    if (ownCut.ok && !keepUserTurnsExplicit) {
-      ownCut = applyTailBudget(branchEntries as any[], ownCut, { charsPerToken: tokenEstimate.charsPerToken });
+    if (ownCut.ok && !keepUserTurnsExplicit && !checkpointActive) {
+      ownCut = applyTailBudget(projectedEntries, ownCut, { charsPerToken: tokenEstimate.charsPerToken });
     }
     if (!ownCut.ok) {
       const lastComp: any = [...branchEntries].reverse().find((e: any) => e.type === "compaction");
       const lastCompIdx = lastComp ? (branchEntries as any[]).indexOf(lastComp) : -1;
 
-      // Recompute liveMessages view (same logic as buildOwnCut) for diagnostic
-      const lastKeptId: string | undefined = lastComp?.firstKeptEntryId;
-      const hasPriorCompaction = lastCompIdx >= 0;
-      const hasValidKeptId = !!lastKeptId && (branchEntries as any[]).some((e: any) => e.id === lastKeptId);
-      const diagOrphan = hasPriorCompaction && !hasValidKeptId;
-      const liveRoles: string[] = [];
-      if (diagOrphan) {
-        for (let i = lastCompIdx + 1; i < branchEntries.length; i++) {
-          const e = (branchEntries as any[])[i];
-          if (e.type === "compaction") continue;
-          if (e.type === "message" && e.message) liveRoles.push(e.message.role);
-        }
-      } else {
-        let foundKept = !lastKeptId;
-        for (const e of branchEntries as any[]) {
-          if (!foundKept && e.id === lastKeptId) foundKept = true;
-          if (!foundKept) continue;
-          if (e.type === "compaction") continue;
-          if (e.type === "message" && e.message) liveRoles.push(e.message.role);
-        }
-      }
+      const liveRoles = collectLiveMessages(projectedEntries).map((entry) => entry.message.role);
       const userIndices = liveRoles.reduce<number[]>((acc, r, i) => (r === "user" ? (acc.push(i), acc) : acc), []);
 
       pendingFollowUpPrompt = null;
@@ -629,9 +635,9 @@ export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegi
     const messages = convertToLlm(agentMessages);
 
     // Count kept messages and estimate tokens
-    const keptIdx = (branchEntries as any[]).findIndex((e: any) => e.id === firstKeptEntryId);
+    const keptIdx = projectedEntries.findIndex((e) => e.id === firstKeptEntryId);
     const keptEntries = keptIdx >= 0
-      ? (branchEntries as any[]).slice(keptIdx).filter((e: any) => e.type === "message")
+      ? projectedEntries.slice(keptIdx)
       : [];
     const keptChars = keptEntries.reduce(
       (sum: number, e: any) => sum + estimateMessageContentChars(e.message?.content),
@@ -676,7 +682,7 @@ export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegi
     const RANKED_BRIEF_TOKENS_PER_BLOCK = 15;
     const summary = compileRanked({
       messages,
-      previousSummary: preparation.previousSummary,
+      previousSummary,
       fileOps: {
         readFiles: [...preparation.fileOps.read],
         modifiedFiles: [...preparation.fileOps.written, ...preparation.fileOps.edited],
@@ -721,7 +727,7 @@ export const registerBeforeCompactHook = (pi: ExtensionAPI, options: CompactRegi
       version: 1,
       sections: [...summary.matchAll(/^\[(.+?)\]/gm)].map((m) => m[1]),
       sourceMessageCount: agentMessages.length,
-      previousSummaryUsed: Boolean(preparation.previousSummary),
+      previousSummaryUsed: Boolean(previousSummary),
       reason,
       willRetry,
     };

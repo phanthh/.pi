@@ -32,6 +32,7 @@
   "showCacheMissNotices": true,
   "enabledModels": [
     "openai-codex/gpt-6.1-sol",
+    "openai-codex/gpt-6-sol",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-opus-5-5",
     "opencode-go/space-bunny-free"

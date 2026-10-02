@@ -26,10 +26,12 @@ import { parseContextCommand } from "./view/command.ts";
 import { buildSnapshot } from "./view/model.ts";
 import { computeUsage, toReportedUsage } from "./view/usage.ts";
 import { gaugeFillWidth, UsageView } from "./view/ui/usage-view.ts";
+import { buildInjectionRows } from "./view/ui/injections-model.ts";
 
 // ── unified /context grammar ────────────────────────────────────────────────
 assert.deepEqual(parseContextCommand(""), { type: "view", view: "usage" });
 assert.deepEqual(parseContextCommand("injections"), { type: "view", view: "injections" });
+assert.equal(parseContextCommand("view").type, "invalid");
 assert.equal(parseContextCommand("status").type, "invalid");
 assert.deepEqual(parseContextCommand("settings"), { type: "om", action: "settings" });
 assert.deepEqual(parseContextCommand("reload"), { type: "om", action: "reload" });
@@ -131,6 +133,40 @@ assert.equal(extensions?.children?.[0]?.entries?.[0]?.text, "hidden policy");
     assert.deepEqual(item?.children?.map((child) => child.label).sort(), ["allowed", "path&<>\"'"]);
     assert.equal(item?.label, "Skills (2)");
     assert.equal(item?.tokens, item?.children?.reduce((sum, child) => sum + child.tokens, 0));
+  }
+}
+
+// ── live-context prompt visibility ──────────────────────────────────────────
+{
+  const live = "<live_context>\nEdit /session.context/live.md at turn end.\n</live_context>";
+  const options = { cwd: "/project" };
+  for (const footer of ["<cwd>\n/project\n</cwd>", "Current working directory: /project", ""]) {
+    const prompt = `Base instructions.\n\n${footer}\n\n${live}`;
+    const input = { systemPrompt: prompt, options, allTools: [], activeToolNames: [] };
+    const snapshot = buildNativeSnapshot(input);
+    const capture = new InitialCaptureState();
+    capture.prepare(options, prompt);
+    assert.deepEqual(capture.finalize(() => ({ ...input, messages: [], baselineMessages: [], origin: "real-turn" }))?.groups, snapshot.groups);
+    assert.ok(buildInjectionRows(snapshot).some((row) => row.kind === "item" && row.itemId === "base-prompt:live-context" && row.label === "Live Context"));
+    const items = snapshot.groups.flatMap((group) => group.items);
+    const base = items.find((item) => item.id === "base-prompt")!;
+    const item = base.children?.find((child) => child.label === "Live Context");
+    assert.equal(item?.text, live);
+    assert.ok(item!.tokens > 0, "live instructions carry counted tokens");
+    assert.equal(base.tokens, Math.ceil(base.text.length / 4));
+    assert.equal(base.children?.reduce((sum, child) => sum + child.tokens, 0), base.tokens, "system prompt child estimates reconcile");
+    assert.equal(items.filter((item) => item.text.includes("Edit /session.context/live.md")).length, 1, "live instructions count only in system prompt");
+    if (footer) assert.equal(base.children?.find((child) => child.label === "Current Dir")?.text.trim(), footer);
+    const usage = computeUsage({ snapshot, messages: [] });
+    const system = usage.categories.find((category) => category.id === "system-prompt")!;
+    assert.equal(system.tokens, base.tokens);
+    assert.ok(system.children?.flatMap((child) => child.entries ?? []).some((entry) => entry.sections?.some((section) => section.label === "Live Context" && section.text === live && section.tokens === item?.tokens)), "main context system prompt preview contains counted live instructions");
+    assert.equal(usage.estimatedTokens, snapshot.totalTokens, "usage and capture totals agree");
+    assert.ok(!usage.categories.some((category) => category.id === "extensions"), "live instructions are not counted again as extension additions");
+  }
+  for (const block of ["", "<live_context>\nUnclosed instructions."]) {
+    const snapshot = buildNativeSnapshot({ systemPrompt: `Base.\n${block}`, options, allTools: [], activeToolNames: [] });
+    assert.ok(!snapshot.groups.flatMap((group) => group.items).flatMap((item) => item.children ?? []).some((item) => item.label === "Live Context"));
   }
 }
 
@@ -441,6 +477,7 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
     msg("u2", "user", 2_000), msg("a2", "assistant", 3_000),
     { type: "custom", id: "om", parentId: null, timestamp: at(9_000), customType: "om", data: {} },
   ];
+  for (let i = 1; i < branch.length; i++) branch[i].parentId = branch[i - 1].id;
   assert.equal(lastCacheTouchMs(branch), 3_000, "custom ledger entries do not reset idle clock");
   assert.equal(lastCacheTouchMs([...branch, { type: "usage", kind: "cache_warm", timestamp: at(8_000) }]), 8_000, "cache warm refresh counts");
   assert.equal(lastCacheTouchMs([msg("u", "user", 0)]), undefined);

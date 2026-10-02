@@ -36,10 +36,12 @@ import { showUsageView } from "./ui/usage-view.ts";
 import { computeUsage, toReportedUsage } from "./usage.ts";
 import { handleOmCommand } from "../om-command.ts";
 import type { OmRuntime } from "../om.ts";
+import type { LiveContextRuntime } from "../live/index.ts";
+import { normalizeInlineText } from "./text.ts";
 
 const INJECTED_CONTEXT_MESSAGE_EVENT = "pi:context-message-injected";
 
-export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
+export function registerContextView(pi: ExtensionAPI, om: OmRuntime, live?: LiveContextRuntime) {
 	const capture = new InitialCaptureState();
 	const probe = new SilentProbeState();
 	const compaction = new CompactionState();
@@ -152,7 +154,28 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 				return;
 			}
 			if (command.type === "om") {
-				await handleOmCommand(command.action, ctx, om);
+				await handleOmCommand(command.action, ctx, om, live);
+				return;
+			}
+			if (command.type === "live") {
+				if (live === undefined) {
+					reportCommandMessage(ctx, "context: live context runtime unavailable", "warning");
+					return;
+				}
+				if (command.action === "revisions") {
+					try { reportCommandMessage(ctx, `Live context revision diffs: ${live.revisions(ctx)}`, "info"); }
+					catch (error) { reportCommandMessage(ctx, String(error), "error"); }
+					return;
+				}
+				if (command.action !== "status") live.setEnabled(command.action === "on", ctx);
+				const status = live.status(ctx);
+				const details = [
+					`context: live ${status.enabled ? "on" : "off"} · ${status.available ? "available" : "unavailable"} · ${status.edits} edits`,
+					status.path,
+					status.lastResult,
+					status.error,
+				].filter((value) => value !== undefined).join(" · ");
+				reportCommandMessage(ctx, normalizeInlineText(details), status.error ? "warning" : "info");
 				return;
 			}
 			// Creating the file needs no UI, so it stays available in every run mode.
@@ -179,8 +202,12 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 			const contextWindow = modelContextWindow === undefined
 				? undefined
 				: effectiveMaxTokens(modelContextWindow, compactionSettings?.overrideMaxTokens);
+			const systemPrompt = ctx.getSystemPrompt();
+			// Pi clears run-only prompt overrides before commands can inspect them.
+			const liveInstructions = live?.instructions(ctx);
 			const current = buildNativeSnapshot({
-				systemPrompt: ctx.getSystemPrompt(),
+				systemPrompt: liveInstructions !== undefined && !systemPrompt.includes("<live_context>\n")
+					? `${systemPrompt}\n\n${liveInstructions}` : systemPrompt,
 				options: ctx.getSystemPromptOptions(),
 				allTools: pi.getAllTools(),
 				activeToolNames: pi.getActiveTools(),
@@ -201,6 +228,7 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime) {
 						: undefined,
 				}),
 				memory: om.metrics(ctx),
+				liveContext: live?.status(ctx),
 				degradedReason: initial.degradedReason,
 				// Reported inside the view: a notification would stay hidden behind the fullscreen overlay.
 				notices: loadedConfig.warnings,

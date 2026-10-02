@@ -1,11 +1,12 @@
 /**
- * /context — status, settings, reload for the observational memory layer.
+ * /context — settings and reload for context management.
  * Pi has no extension hook into the built-in /settings UI, so settings live here.
  */
 import { getSettingsListTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { globalConfigPath, saveGlobalConfig, type OmConfig } from "./config.ts";
 import type { OmRuntime } from "./om.ts";
+import type { LiveContextRuntime } from "./live/index.ts";
 
 const NUMERIC_PRESETS: Partial<Record<keyof OmConfig, number[]>> = {
   observeAfterTokens: [10_000, 15_000, 20_000, 40_000],
@@ -17,6 +18,13 @@ const NUMERIC_PRESETS: Partial<Record<keyof OmConfig, number[]>> = {
 const onOff = (value: boolean): string => (value ? "on" : "off");
 
 const buildItems = (config: OmConfig): SettingItem[] => [
+  {
+    id: "liveContext.mode",
+    label: "Live context editing",
+    description: "off: disabled; main: main sessions only; all: includes subagents. Branch overrides use /context live on|off.",
+    currentValue: config.liveContext.mode,
+    values: ["off", "main", "all"],
+  },
   {
     id: "sessionFallback",
     label: "Use session model when none configured",
@@ -50,6 +58,9 @@ const buildItems = (config: OmConfig): SettingItem[] => [
 ];
 
 const applySetting = (id: string, value: string): Partial<OmConfig> | null => {
+  if (id === "liveContext.mode" && (value === "off" || value === "main" || value === "all")) {
+    return { liveContext: { mode: value } };
+  }
   if (id === "sessionFallback") return { sessionFallback: value === "on" };
   if (id === "observeAfterTokens" || id === "reflectAfterTokens" || id === "observationsPoolMaxTokens" || id === "reflectionsPoolMaxTokens") {
     const parsed = Number(value);
@@ -62,10 +73,12 @@ export const handleOmCommand = async (
   action: "settings" | "reload",
   ctx: ExtensionCommandContext,
   om: OmRuntime,
+  live?: LiveContextRuntime,
 ): Promise<void> => {
   if (action === "reload") {
     om.reload(ctx);
-    ctx.ui.notify("context: observational-memory config reloaded", "info");
+    live?.reload(ctx);
+    ctx.ui.notify("context: config reloaded", "info");
     return;
   }
 
@@ -76,7 +89,7 @@ export const handleOmCommand = async (
     }
     await ctx.ui.custom((_tui, theme, _kb, done) => {
       const container = new Container();
-      container.addChild(new Text(theme.fg("accent", theme.bold("Context / observational memory")), 1, 1));
+      container.addChild(new Text(theme.fg("accent", theme.bold("Context settings")), 1, 1));
       const items = buildItems(om.getConfig());
       const list = new SettingsList(
         items,
@@ -87,6 +100,7 @@ export const handleOmCommand = async (
           if (!patch) return;
           saveGlobalConfig(patch);
           om.reload(ctx);
+          live?.reload(ctx);
         },
         () => done(undefined),
       );

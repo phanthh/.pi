@@ -15,22 +15,27 @@ import type { ConfigCreationResult } from "./config.ts";
 import type { InitialSnapshot } from "./model.ts";
 import { normalizePreviewText } from "./text.ts";
 
-const COMMAND_USAGE = "Usage: /context [usage|injections|settings|reload|config]";
+const COMMAND_USAGE = "Usage: /context [usage|injections|settings|reload|config|live [on|off|status|revisions]]";
 /**
  * Slash-command palette text, kept beside the grammar it describes.
  * RegisteredCommand has no argumentHint; mimic pi's `<hint> — <description>` style.
  */
 export const CONTEXT_COMMAND_DESCRIPTION =
-	"[usage|injections|settings|reload|config] - Inspect and manage context";
+	"[usage|injections|settings|reload|config|live [on|off|status|revisions]] - Inspect and manage context";
 /** Cap for reported messages, which may quote configuration files and OS error text. */
 const MAX_REPORTED_MESSAGE_LENGTH = 500;
 const DEFAULT_VIEW: ContextView = "usage";
 const ARGUMENT_OPTIONS = [
 	{ value: "usage", label: "usage", description: "Show estimated context usage" },
 	{ value: "injections", label: "injections", description: "Explore initial context injections" },
-	{ value: "settings", label: "settings", description: "Configure observational memory" },
-	{ value: "reload", label: "reload", description: "Reload observational-memory configuration" },
+	{ value: "settings", label: "settings", description: "Configure context management" },
+	{ value: "reload", label: "reload", description: "Reload context configuration" },
 	{ value: "config", label: "config", description: "Create context-view color config" },
+	{ value: "live", label: "live", description: "Show live context status" },
+	{ value: "live on", label: "live on", description: "Enable live context on this branch" },
+	{ value: "live off", label: "live off", description: "Disable live context on this branch" },
+	{ value: "live status", label: "live status", description: "Show live context status" },
+	{ value: "live revisions", label: "live revisions", description: "View edits across live-context revisions" },
 ] satisfies AutocompleteItem[];
 
 /** The focused view a `/context` invocation requests. */
@@ -41,6 +46,7 @@ export type ContextCommand =
 	| { readonly type: "view"; readonly view: ContextView }
 	| { readonly type: "om"; readonly action: "settings" | "reload" }
 	| { readonly type: "config" }
+	| { readonly type: "live"; readonly action: "on" | "off" | "status" | "revisions" }
 	| { readonly type: "invalid"; readonly message: string };
 
 /** Resolved Initial capture, possibly degraded to the pi-native fallback. */
@@ -67,12 +73,18 @@ export function parseContextCommand(argumentsText: string): ContextCommand {
 	if (words.length === 1 && words[0] === "config") {
 		return { type: "config" };
 	}
+	if (words[0] === "live") {
+		if (words.length === 1) return { type: "live", action: "status" };
+		if (words.length === 2 && (words[1] === "on" || words[1] === "off" || words[1] === "status" || words[1] === "revisions")) {
+			return { type: "live", action: words[1] };
+		}
+	}
 	return { type: "invalid", message: COMMAND_USAGE };
 }
 
 /** Complete full argument values for the supported `/context` grammar. */
 export function getContextArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
-	const normalizedPrefix = argumentPrefix.trimStart().toLowerCase();
+	const normalizedPrefix = argumentPrefix.trimStart().toLowerCase().replace(/\s+/g, " ");
 	const matches = ARGUMENT_OPTIONS.filter((option) => option.value.startsWith(normalizedPrefix));
 	return matches.length > 0 ? matches.map((option) => ({ ...option })) : null;
 }

@@ -27,7 +27,7 @@ extensions/
 |---|---|---|
 | `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
 | `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls; internal auth/account/quota/cache/relay/routing code lives in `src/core` |
-| `context` | `/context`, `/compact`, `/recall`; `recall` tool | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), idle-aware compaction (user msg after 5m cache TTL → compact first). Has its own `README.md` |
+| `context` | `/context`, `/compact`, `/recall`; `recall` tool | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), idle-aware compaction, optional agent-editable live context (`/context live on`, disabled by default). Has its own `README.md`. `pnpm --filter pi-context selftest` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer) |
@@ -35,6 +35,7 @@ extensions/
 | `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, scratch tmux session) |
 | `tmux-subagents` | `tmux_subagent` tool | async child pi sessions in panes + live widget; agent defs in `agents/*.md` |
 | `ttsr` | stream watcher | Time-Traveling Stream Rules: aborts mid-stream on rule violation, injects rule, retries. Rules = md+frontmatter in `rules/`, shadowed by `~/.pi/agent/ttsr` then `.pi/ttsr` |
+| `up-history` | native editor Up/Down history | seeds latest 30 unique saved user prompts for current cwd; preserves custom editor, honors custom session dirs, TUI-only. No settings/commands/history files. `pnpm --filter @pi-ext/up-history test` |
 | `usage` | footer status + `/usage` | Claude (main + anthropic-auth fallbacks), Codex, OpenCode Go subscription windows; polls TTL-gated via shared `~/.pi/agent/cache/usage.json`, live updates from `after_provider_response` headers + Codex `codex.rate_limits` stream events. Has `README.md`. `pnpm --filter @pi-ext/usage test` |
 | `web-fetch` | `web_fetch` tool | wreq-js TLS impersonation + defuddle extraction |
 | `web-search` | `web_search` tool | SearXNG; base URL from `~/.pi/agent/web-search.json` → `SEARXNG_URL` → localhost:8888 |
