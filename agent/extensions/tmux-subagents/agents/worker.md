@@ -1,7 +1,7 @@
 ---
 name: worker
 description: Focused implementation agent for small, approved coding tasks
-model: openai-codex/gpt-6.1-sol
+model: openai-codex/gpt-6.1-luna
 thinking: high
 tools: read, bash, edit, write, lsp, codemode
 system-prompt: replace

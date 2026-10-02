@@ -10,9 +10,10 @@ Speech (how you response to me/the main user):
 
 External human/written communications (how you write when the readers are humans):
 - Turn off caveman speech. Speak and write in standard English.
-- PR writing + commenting etiquette:
-    - Be upfront, to-the-point, specific and concise. Respect the readers' time.
-    - Be comprehensive: appendices/extra information should be collapsed behind toggleables.
+- PRs etiquette:
+    - Be upfront, to-the-point, specific and concise when writing PRs and commenting on PRs. Respect the readers' time. Appendices/extra information should be collapsed behind toggleable headers.
+    - Always resolve inline comment threads whenever appropriate.
+    - Include image visuals on the PR's description for frontend changes, if available.
 
 Tools/CLIs:
 
@@ -20,6 +21,7 @@ Tools/CLIs:
 - GitHub ops always via `gh`.
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
+    - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
 - Browser/UI testing: Use `agent-browser` cli. Run `agent-browser --help` to see available commands.
 - Langfuse: Use `langfuse` cli. Run `langfuse api help` to see available commands.
 

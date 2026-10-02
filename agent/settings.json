@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.99.2",
+  "lastChangelogVersion": "1.0.0",
   "theme": "tokyonight",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -28,7 +28,7 @@
   "branchSummary": {
     "skipPrompt": true
   },
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "showCacheMissNotices": true,
   "enabledModels": [
     "openai-codex/gpt-6.1-sol",
