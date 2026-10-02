@@ -131,6 +131,9 @@ export default function (pi: ExtensionAPI) {
   let agentStarted = false;
 
   pi.on("session_start", (_event, ctx) => {
+    // Resume and project defaults can omit codemode; keep the role's other tools unchanged.
+    const activeTools = pi.getActiveTools();
+    if (!activeTools.includes("codemode")) pi.setActiveTools([...activeTools, "codemode"]);
     recorder.sessionStart();
     toolNames = pi.getAllTools().map((t) => t.name).sort();
     denied = parseDeniedTools(deniedToolsValue);

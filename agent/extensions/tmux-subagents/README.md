@@ -62,7 +62,7 @@ Commands: `/subagent <agent> <task>`, `/iterate <task>` (forks this session into
 
 ## Child-side tools
 
-Every child loads `child.ts` via `-e`:
+Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
 - `subagent_done` — finish; last assistant message becomes the summary.
 - `caller_ping` — ask the parent for help, exit; parent can `resume` the session.
@@ -70,8 +70,12 @@ Every child loads `child.ts` via `-e`:
 
 A `tools` allowlist (param or frontmatter) is passed as `--tools`, which replaces
 the default selection; `subagent_done`, `caller_ping`, and pi's built-in
-`codemode` are always added, so every child can run codemode scripts and reach
-MCP tools. Without an allowlist, children use `defaultTools` from settings.
+`codemode` are always added, so every child can run codemode scripts using its
+allowed tools. The allowlist also restricts tools callable through codemode;
+MCP tools are unavailable unless explicitly named. Without an allowlist,
+children use `defaultTools` from settings. On session start (including reload
+and resume), `child.ts` activates codemode without changing the other active
+tools, even if project defaults omit it or disable the built-in extension.
 
 ## Bundled agents
 
@@ -113,4 +117,4 @@ session.ts   child session seeding, summary extraction
 agents/      scout, worker, delegate, researcher
 ```
 
-Typecheck: `tsgo --noEmit -p tsconfig.json` (paths point at the local pi checkout).
+Checks from the extensions workspace: `pnpm --filter pi-tmux-subagents test` and `pnpm check`.

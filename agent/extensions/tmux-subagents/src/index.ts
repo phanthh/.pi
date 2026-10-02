@@ -185,7 +185,7 @@ function loadAgentDefaults(agentName: string): AgentDefinition | null {
 
 /** Tools gated by `spawning: false`. */
 const SPAWNING_TOOLS = new Set(["tmux_subagent"]);
-// codemode is pi's built-in script tool; MCP tools are only reachable through it.
+// Keep codemode available without widening the child's tool allowlist.
 const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done", "codemode"] as const;
 
 function resolveDenyTools(agentDefs: AgentDefaults | null): Set<string> {
@@ -615,7 +615,10 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
     ? params.task
     : `${roleBlock}\n\n${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
 
-  const parts: string[] = ["pi", "--session", shellEscape(childSessionFile), "-e", shellEscape(CHILD_EXTENSION)];
+  const parts: string[] = [
+    "pi", "--session", shellEscape(childSessionFile),
+    "-e", shellEscape(CHILD_EXTENSION), "-e", "builtin:codemode",
+  ];
 
   if (effectiveModel) {
     parts.push("--model", shellEscape(effectiveThinking ? `${effectiveModel}:${effectiveThinking}` : effectiveModel));
@@ -1088,7 +1091,10 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         const surface = createSurface(name);
         await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
 
-        const parts = ["pi", "--session", shellEscape(params.sessionPath), "-e", shellEscape(CHILD_EXTENSION)];
+        const parts = [
+          "pi", "--session", shellEscape(params.sessionPath),
+          "-e", shellEscape(CHILD_EXTENSION), "-e", "builtin:codemode",
+        ];
         if (params.message) {
           const messageFile = join(artifactDir, "subagent-resume", `${slug(name, "resume")}-${id}.md`);
           mkdirSync(dirname(messageFile), { recursive: true });

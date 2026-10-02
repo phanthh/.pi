@@ -27,7 +27,6 @@ extensions/
 |---|---|---|
 | `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
 | `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls; internal auth/account/quota/cache/relay/routing code lives in `src/core` |
-| `bash-guard` | hook on `bash` | subagents: headless hard-block; main session: off by default + irreversible-op floor. `/bash-guard` toggles |
 | `context` | `/context`, `/compact`, `/recall`; `recall` tool | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), idle-aware compaction (user msg after 5m cache TTL → compact first). Has its own `README.md` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
@@ -46,7 +45,7 @@ extensions/
 - Per-extension runtime config lives in `~/.pi/agent/<name>.json` (read with `getAgentDir()`), not here.
 - Env signals available: `PI_SUBAGENT_DEPTH`, `PI_SUBAGENT_ID` (set by tmux-subagents) — used to change
   behaviour between main session and children.
-- Nontrivial extensions carry their own `README.md` (`bash-guard`, `tmux-subagents`, `ttsr`, `usage`) — read it
+- Nontrivial extensions carry their own `README.md` (`tmux-subagents`, `ttsr`, `usage`) — read it
   before touching them; keep it in sync with behaviour changes.
 - pi runs from source (`~/dev/pi`, `~/.local/bin/pi` → `packages/coding-agent/dist/cli.js`); pi packages are `link:`ed to
   it, so types track the local build. Rebuild pi (`npm run build` in `~/dev/pi`) before `pnpm check` after pulling.

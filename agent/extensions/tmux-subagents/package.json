@@ -2,6 +2,9 @@
 	"name": "pi-tmux-subagents",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"test": "node --test src/child.test.ts"
+	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},
