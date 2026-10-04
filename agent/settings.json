@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.0.0",
+  "lastChangelogVersion": "1.0.1",
   "theme": "tokyonight",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -39,5 +39,6 @@
   ],
   "defaultTools": [
     "+codemode"
-  ]
+  ],
+  "deviceId": "930ad8ff-c58d-4a02-b7e8-20127ad05db6"
 }

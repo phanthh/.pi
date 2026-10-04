@@ -1,5 +1,4 @@
 {
-  "liveContext": { "mode": "main" },
   "model": { "provider": "openai-codex", "id": "gpt-6-luna" },
   "observerModel": null,
   "reflectorModel": null,
