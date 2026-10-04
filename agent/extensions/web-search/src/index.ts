@@ -5,7 +5,10 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -28,6 +31,7 @@ interface SearchDetails {
 	results: SearchResult[];
 	answers?: string[];
 	suggestions?: string[];
+	engineFailures?: string[];
 }
 
 function resolveBaseUrl(): string {
@@ -108,10 +112,13 @@ export default function (pi: ExtensionAPI) {
 				Math.max(1, Math.floor(params.max_results ?? DEFAULT_MAX_RESULTS)),
 			);
 
-			const url = new URL("/search", `${baseUrl}/`);
+			const url = new URL("search", `${baseUrl}/`);
 			url.searchParams.set("q", params.query);
 			url.searchParams.set("format", "json");
-			url.searchParams.set("pageno", String(Math.max(1, params.page ?? 1)));
+			url.searchParams.set(
+				"pageno",
+				String(Math.max(1, Math.floor(params.page ?? 1))),
+			);
 			if (params.categories)
 				url.searchParams.set("categories", params.categories);
 			if (params.time_range)
@@ -146,11 +153,24 @@ export default function (pi: ExtensionAPI) {
 				results?: unknown;
 				answers?: unknown;
 				suggestions?: unknown;
-			};
+				unresponsive_engines?: unknown;
+			} | null;
+			if (!data || !Array.isArray(data.results)) {
+				throw new Error("Invalid SearXNG response: expected a results array.");
+			}
+			const engineFailures = Array.isArray(data.unresponsive_engines)
+				? data.unresponsive_engines.flatMap((entry: unknown) =>
+						Array.isArray(entry) &&
+						typeof entry[0] === "string" &&
+						typeof entry[1] === "string"
+							? [`${entry[0]}: ${entry[1]}`]
+							: [],
+					)
+				: [];
 
 			const seen = new Set<string>();
 			const results: SearchResult[] = [];
-			for (const item of Array.isArray(data.results) ? data.results : []) {
+			for (const item of data.results) {
 				if (!item || typeof item !== "object") continue;
 				const r = item as Record<string, unknown>;
 				if (typeof r.url !== "string" || seen.has(r.url)) continue;
@@ -172,6 +192,7 @@ export default function (pi: ExtensionAPI) {
 				results,
 				answers: asStrings(data.answers),
 				suggestions: asStrings(data.suggestions),
+				engineFailures,
 			};
 
 			const lines: string[] = [];
@@ -179,7 +200,11 @@ export default function (pi: ExtensionAPI) {
 				lines.push(`Answers: ${details.answers.join(" | ")}`, "");
 			}
 			if (results.length === 0) {
-				lines.push(`No results for: ${params.query}`);
+				lines.push(
+					engineFailures.length
+						? `SearXNG returned no results; upstream engines failed for: ${params.query}`
+						: `No results for: ${params.query}`,
+				);
 				if (details.suggestions?.length) {
 					lines.push(`Suggestions: ${details.suggestions.join(", ")}`);
 				}
@@ -196,9 +221,17 @@ export default function (pi: ExtensionAPI) {
 				});
 			}
 
+			if (engineFailures.length) {
+				lines.push("", `Engine failures: ${engineFailures.join("; ")}`);
+			}
+
 			return {
 				content: [{ type: "text" as const, text: lines.join("\n") }],
 				details,
+				isError:
+					results.length === 0 &&
+					!details.answers?.length &&
+					engineFailures.length > 0,
 			};
 		},
 
@@ -217,12 +250,13 @@ export default function (pi: ExtensionAPI) {
 				return new Text(theme.fg("warning", "Searching…"), 0, 0);
 			}
 			const details = result.details as SearchDetails | undefined;
-			if (!details) {
-				return new Text(theme.fg("muted", "No search details."), 0, 0);
-			}
-			if (details.results.length === 0) {
+			if (!details || details.results.length === 0) {
+				const message = result.content
+					.filter((block) => block.type === "text")
+					.map((block) => block.text)
+					.join("\n");
 				return new Text(
-					theme.fg("muted", `No results for ${details.query}`),
+					theme.fg(result.isError ? "error" : "muted", message),
 					0,
 					0,
 				);
@@ -231,6 +265,14 @@ export default function (pi: ExtensionAPI) {
 			const lines = [
 				theme.fg("toolTitle", theme.bold(`Results (${details.count})`)),
 			];
+			if (details.engineFailures?.length) {
+				lines.push(
+					theme.fg(
+						"warning",
+						`Engine failures: ${details.engineFailures.join("; ")}`,
+					),
+				);
+			}
 			details.results.forEach((r, i) => {
 				lines.push(
 					`${i + 1}. ${theme.fg("text", r.title)} ${theme.fg("muted", "—")} ${theme.fg("accent", hostname(r.url))}`,

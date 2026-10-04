@@ -22,7 +22,7 @@ Tools/CLIs:
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
     - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
-- Browser/UI testing: Use `agent-browser` cli. Run `agent-browser --help` to see available commands.
+- Browser/UI: `agent-browser` MCP via codemode. Read the `agent-browser` skill first.
 - Langfuse: Use `langfuse` cli. Run `langfuse api help` to see available commands.
 
 Async tasks:
