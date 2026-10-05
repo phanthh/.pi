@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "typebox";
+import { workerDepth } from "@pi-ext/tmux-layout";
 import {
   getSubagentActivityFile,
   readSubagentActivityFile,
@@ -651,7 +652,7 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
   envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
   envParts.push(`PI_SUBAGENT_SURFACE=${shellEscape(surface)}`);
-  envParts.push(`PI_SUBAGENT_DEPTH=${Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10) + 1}`);
+  envParts.push(`PI_SUBAGENT_DEPTH=${workerDepth()}`);
 
   let taskArg: string;
   if (behavior.taskDelivery === "direct") {
@@ -1071,6 +1072,17 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         inheritedThinking: ctx.thinkingLevel,
       };
 
+      // Launch and resume both spawn into the next column and obey the same cap.
+      const depth = workerDepth() - 1;
+      const maxDepth = Number.parseInt(process.env.PI_SUBAGENT_MAX_DEPTH ?? "2", 10) || 2;
+      if (depth >= maxDepth) {
+        return reply(
+          `Subagent depth limit reached (${depth}/${maxDepth}). Do this work yourself.`,
+          { error: "depth limit" },
+          true,
+        );
+      }
+
       if (action === "resume") {
         if (!params.sessionPath) return reply("Missing sessionPath for resume.", { error: "missing sessionPath" }, true);
         if (!existsSync(params.sessionPath)) {
@@ -1110,6 +1122,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath)}`);
         envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
         envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
+        envParts.push(`PI_SUBAGENT_DEPTH=${workerDepth()}`);
         if (autoExit) envParts.push("PI_SUBAGENT_AUTO_EXIT=1");
 
         const launchScriptFile = join(artifactDir, "subagent-scripts", `${slug(name, "resume")}-resume-${id}.sh`);
@@ -1152,18 +1165,6 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         return reply(
           'Missing name or task. Provide both to launch, or set action to list/status/send/interrupt/stop/resume.',
           { error: "missing name or task" },
-          true,
-        );
-      }
-
-      // Depth cap: children may delegate once, grandchildren never. Keeps a
-      // runaway agent from filling the window with panes.
-      const depth = Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0;
-      const maxDepth = Number.parseInt(process.env.PI_SUBAGENT_MAX_DEPTH ?? "2", 10) || 2;
-      if (depth >= maxDepth) {
-        return reply(
-          `Subagent depth limit reached (${depth}/${maxDepth}). Do this work yourself.`,
-          { error: "depth limit" },
           true,
         );
       }

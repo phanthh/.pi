@@ -31,8 +31,8 @@ extensions/
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer) |
-| `tmux` | `tmux` tool + `tool_call` guard | named panes for long-running processes; `src/guard.ts` blocks `bash`/`tmux`-tool commands that create/kill/move tmux windows or sessions (user-managed; `-L`/`-S` isolated servers allowed). `pnpm --filter pi-tmux test` |
-| `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, scratch tmux session) |
+| `tmux` | `tmux` tool + `tool_call` guard | named panes for long-running processes; `src/guard.ts` blocks `bash`/`tmux`-tool commands that create/kill/move tmux windows or sessions (user-managed; `-L`/`-S` isolated servers allowed). Shared layout check: `pnpm --filter @pi-ext/tmux-layout test` |
+| `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, isolated tmux server) |
 | `tmux-subagents` | `tmux_subagent` tool | async child pi sessions in panes + live widget; agent defs in `agents/*.md` |
 | `ttsr` | stream watcher | Time-Traveling Stream Rules: aborts mid-stream on rule violation, injects rule, retries. Rules = md+frontmatter in `rules/`, shadowed by `~/.pi/agent/ttsr` then `.pi/ttsr` |
 | `up-history` | native editor Up/Down history | seeds latest 30 unique saved user prompts for current cwd; preserves custom editor, honors custom session dirs, TUI-only. No settings/commands/history files. `pnpm --filter @pi-ext/up-history test` |

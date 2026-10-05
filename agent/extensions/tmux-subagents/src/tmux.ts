@@ -2,8 +2,8 @@
  * tmux surface primitives for subagent panes.
  *
  * A "surface" is a tmux pane id (`%12`). Layout comes from the shared
- * lib/tmux-layout convention: pi left, all worker panes (tool + subagent)
- * stacked in one right column, rebalanced on create/close.
+ * tmux-layout convention: pi left, worker panes (tool + subagent) stacked
+ * in one full-height column per depth, rebalanced on create/close.
  */
 import { execFile, execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

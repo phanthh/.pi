@@ -1,26 +1,12 @@
 /**
- * Shared tmux worker-pane layout for pi extensions (tmux tool + tmux-subagents).
- *
- * Convention: one full-height column per spawn depth, left → right.
- *
- *   | pi (+ your own panes) | depth 1 | depth 2 |
- *
- * Root pi (PI_SUBAGENT_DEPTH unset) puts its panes (subagents + tmux tool
- * panes) in the depth-1 column; a depth-1 subagent puts its panes in the
- * depth-2 column, and so on. So a spawned pane is always right of its spawner.
- * Each column stacks vertically and is rebalanced to equal heights; worker
- * columns share the space right of the pi region equally.
- *
- * Only panes tagged `@pi_depth` count as workers — untagged panes (pi itself,
- * editors you split yourself) are never stacked onto or resized.
- *
- * Stateless: every decision comes from querying the live window, so all pi
- * processes in the window share one view of the world.
+ * Shared tmux layout: pi/user region left, one full-height column per depth.
+ * Both tools use live pane tags and normalize the layout after create/close.
  */
 import { execFileSync } from "node:child_process";
+import { columnLayout, formatLayout, leaves, parseLayout, userRegion, type LayoutCell, type PaneCell } from "./layout.ts";
 
-function tmux(args: string[]): string {
-  return execFileSync("tmux", args, { encoding: "utf8" });
+function tmux(args: string[], timeout = 5000): string {
+  return execFileSync("tmux", args, { encoding: "utf8", timeout, stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 export function piPaneId(): string {
@@ -31,56 +17,41 @@ export function piPaneId(): string {
 
 /** Column this process spawns into: one right of its own depth. */
 export function workerDepth(): number {
-  return (Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0) + 1;
+  const tagged = Number.parseInt(tmux(["display-message", "-p", "-t", piPaneId(), "#{@pi_depth}"]), 10);
+  return (tagged > 0 ? tagged : Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0) + 1;
 }
 
-interface WindowPane {
-  paneId: string;
-  top: number;
-  left: number;
-  width: number;
-  /** `@pi_depth` tag; undefined for untagged (non-worker) panes. */
-  depth?: number;
+type WindowPane = PaneCell & { depth?: number };
+interface WindowState {
+  layout: LayoutCell;
+  panes: WindowPane[];
+  active?: string;
 }
 
-function listWindowPanes(target: string): WindowPane[] {
-  const out = tmux([
-    "list-panes",
-    "-t",
-    target,
-    "-F",
-    "#{pane_id}\t#{pane_top}\t#{pane_left}\t#{pane_width}\t#{@pi_depth}",
-  ]);
-  const panes: WindowPane[] = [];
-  for (const line of out.trim().split("\n")) {
-    if (!line.trim()) continue;
-    const [paneId, top, left, width, depth] = line.split("\t");
-    const d = Number.parseInt(depth, 10);
-    panes.push({
-      paneId,
-      top: Number(top) || 0,
-      left: Number(left) || 0,
-      width: Number(width) || 0,
-      depth: Number.isFinite(d) && d > 0 ? d : undefined,
-    });
-  }
-  return panes.sort((a, b) => a.top - b.top || a.left - b.left);
-}
-
-function column(panes: WindowPane[], depth: number): WindowPane[] {
-  return panes.filter((p) => p.depth === depth);
-}
-
-/** Worker columns (top pane of each), ordered left → right. */
-function columnHeads(panes: WindowPane[]): WindowPane[] {
-  const heads = new Map<number, WindowPane>();
-  for (const p of panes) if (p.depth !== undefined && !heads.has(p.depth)) heads.set(p.depth, p);
-  return [...heads.values()].sort((a, b) => a.left - b.left);
+/** One server queue snapshots the tree, tags and focus consistently. */
+function readWindow(target: string): WindowState {
+  const [encoded, ...lines] = tmux([
+    "display-message", "-p", "-t", target, "#{window_layout}", ";",
+    "list-panes", "-t", target, "-F", "#{pane_id}\t#{@pi_depth}\t#{pane_active}",
+  ]).split("\n");
+  const rows = lines.map((line) => line.split("\t"));
+  const layout = parseLayout(encoded);
+  const depths = new Map(rows.map(([id, depth]) => {
+    const value = Number.parseInt(depth, 10);
+    return [id, value > 0 ? value : undefined];
+  }));
+  return {
+    layout,
+    panes: leaves(layout).map((pane) => ({ ...pane, depth: depths.get(pane.paneId) }))
+      .sort((a, b) => a.top - b.top || a.left - b.left),
+    active: rows.find(([, , active]) => active === "1")?.[0],
+  };
 }
 
 /** Worker panes in this process's column, top → bottom. */
 export function listWorkerPanes(): string[] {
-  return column(listWindowPanes(piPaneId()), workerDepth()).map((p) => p.paneId);
+  const depth = workerDepth();
+  return readWindow(piPaneId()).panes.filter((p) => p.depth === depth).map((p) => p.paneId);
 }
 
 export function isPaneAlive(paneId: string): boolean {
@@ -91,91 +62,117 @@ export function isPaneAlive(paneId: string): boolean {
   }
 }
 
-/** Equalize heights within one column. Columns are full-height, so % of window works. */
-function rebalanceColumn(target: string, depth: number): void {
+function regionWidth(panes: WindowPane[]): number | undefined {
+  const workers = panes.filter((p) => p.depth !== undefined);
+  return workers.length ? Math.min(...workers.map((p) => p.left)) - 1 : undefined;
+}
+
+function rebalance(target: string, before: WindowState): void {
+  const after = readWindow(target);
+  const workers = after.panes.filter((p) => p.depth !== undefined);
+  const depths = [...new Set(workers.map((p) => p.depth!))].sort((a, b) => a - b);
+  const columns = depths.map((depth) => workers.filter((p) => p.depth === depth).map((p) => p.paneId));
+  const region = userRegion(before.layout, new Set(before.panes.filter((p) => p.depth !== undefined).map((p) => p.paneId)));
+  const width = regionWidth(before.panes) ?? regionWidth(after.panes) ?? after.layout.width;
+  const canonical = columnLayout(after.layout, region, width, columns);
+  tmux(["select-layout", "-t", target, formatLayout(canonical)]);
+
+  // tmux ignores serialized pane IDs. Reconcile its leaf order with ours;
+  // using tree order also avoids pane-border-status coordinate offsets.
+  const actual = leaves(parseLayout(tmux(["display-message", "-p", "-t", target, "#{window_layout}"]))).map((p) => p.paneId);
+  const desired = leaves(canonical).map((p) => p.paneId);
   try {
-    const col = column(listWindowPanes(target), depth);
-    if (col.length < 2) return;
-    const pct = Math.floor(100 / col.length);
-    for (const p of col.slice(0, -1)) tmux(["resize-pane", "-t", p.paneId, "-y", `${pct}%`]);
-  } catch {
-    // Cosmetic only.
+    for (const [i, pane] of desired.entries()) {
+      const j = actual.indexOf(pane);
+      if (j < 0) throw new Error("Tmux panes changed while applying layout; retry the pane operation.");
+      if (i === j) continue;
+      tmux(["swap-pane", "-d", "-s", pane, "-t", actual[i]]);
+      [actual[i], actual[j]] = [actual[j], actual[i]];
+    }
+  } finally {
+    if (after.active) tmux(["select-pane", "-t", after.active]);
   }
 }
 
-/**
- * `split -h -f` shrinks every column (pi included) to make room. Restore the
- * pi region to `piRegionWidth`, then share the rest equally among worker
- * columns. resize-pane moves a cell's right border, so go left → right.
- */
-function rebalanceColumnWidths(target: string, piRegionWidth: number): void {
-  try {
-    const panes = listWindowPanes(target);
-    const heads = columnHeads(panes);
-    if (heads.length < 2) return;
-    const edge = heads[0].left - 1;
-    const piNeighbor = panes.find((p) => p.depth === undefined && p.left + p.width === edge);
-    if (piNeighbor) {
-      tmux(["resize-pane", "-t", piNeighbor.paneId, "-x", String(piNeighbor.width + piRegionWidth - edge)]);
+/** All pi processes in a window mutate one layout; do not observe half-tagged splits. */
+function withWindowLock<T>(target: string, fn: () => T): T {
+  const window = tmux(["display-message", "-p", "-t", target, "#{window_id}"]);
+  const deadline = Date.now() + 5000;
+  const delay = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    // Nonblocking server-side compare-and-set. Timed-out wait-for clients
+    // remain queued in tmux, so wait-for cannot provide crash-safe locks.
+    const acquired = tmux(["if-shell", "-F", "-t", window, "#{==:#{@pi_layout_owner},}",
+      `set-option -w -t ${window} @pi_layout_owner ${process.pid} ; display-message -p acquired`,
+      "display-message -p busy"]);
+    if (acquired === "acquired") break;
+    const owner = tmux(["display-message", "-p", "-t", window, "#{@pi_layout_owner}"]);
+    if (owner && !/^\d+$/.test(owner)) throw new Error("Invalid tmux layout lock owner.");
+    const pid = Number(owner);
+    let alive = pid > 0;
+    if (alive) {
+      try { process.kill(pid, 0); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") alive = false;
+      }
     }
-    const windowWidth = Number(tmux(["display-message", "-p", "-t", target, "#{window_width}"]).trim());
-    const each = Math.floor((windowWidth - piRegionWidth - 1 - (heads.length - 1)) / heads.length);
-    if (each < 1) return;
-    for (const head of heads.slice(0, -1)) tmux(["resize-pane", "-t", head.paneId, "-x", String(each)]);
-  } catch {
-    // Cosmetic only.
+    if (!alive && owner) {
+      tmux(["if-shell", "-F", "-t", window, `#{==:#{@pi_layout_owner},${owner}}`,
+        `set-option -w -u -t ${window} @pi_layout_owner`]);
+    }
+    if (Date.now() >= deadline) throw new Error("Tmux layout is busy; retry the pane operation.");
+    Atomics.wait(delay, 0, 0, 25);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      tmux(["set-option", "-w", "-u", "-t", window, "@pi_layout_owner"]);
+    } catch {
+      // Closing the final pane also destroys its window.
+    }
   }
 }
 
 export interface CreateWorkerPaneOptions {
-  /** Pane title (shown in tmux borders). */
   title?: string;
-  /** tmux pane user option tag, e.g. { key: "@pi_name", value: "server" }. */
   tag?: { key: string; value: string };
   cwd?: string;
 }
 
-/**
- * Create a worker pane in this process's depth column: stack below the
- * column's bottom pane, or open the column as a new full-height pane on the
- * window's right edge.
- */
+/** Create in the next depth column, then normalize every column's geometry. */
 export function createWorkerPane(options: CreateWorkerPaneOptions = {}): string {
   const self = piPaneId();
-  const depth = workerDepth();
-  const panes = listWindowPanes(self);
-  const col = column(panes, depth);
-  const heads = columnHeads(panes);
-  const piRegionWidth = heads.length > 0 ? heads[0].left - 1 : null;
-
-  const args = col.length > 0
-    ? ["split-window", "-d", "-v", "-t", col[col.length - 1].paneId]
-    : ["split-window", "-d", "-h", "-f", "-t", self];
-  if (options.cwd) args.push("-c", options.cwd);
-  args.push("-P", "-F", "#{pane_id}");
-
-  const pane = tmux(args).trim();
-  if (!pane.startsWith("%")) throw new Error(`Unexpected tmux split-window output: ${pane}`);
-
-  tmux(["set-option", "-p", "-t", pane, "@pi_depth", String(depth)]);
-  try {
-    tmux(["set-option", "-p", "-t", pane, "@pi_parent", self]);
-    if (options.title) tmux(["select-pane", "-t", pane, "-T", options.title]);
-    if (options.tag) tmux(["set-option", "-p", "-t", pane, options.tag.key, options.tag.value]);
-  } catch {
-    // Cosmetic only.
-  }
-
-  if (col.length === 0 && piRegionWidth !== null) rebalanceColumnWidths(pane, piRegionWidth);
-  rebalanceColumn(pane, depth);
-  return pane;
+  return withWindowLock(self, () => {
+    const before = readWindow(self);
+    const depth = workerDepth();
+    const col = before.panes.filter((p) => p.depth === depth);
+    const args = col.length > 0
+      ? ["split-window", "-d", "-v", "-t", col[col.length - 1].paneId]
+      : ["split-window", "-d", "-h", "-f", "-t", self];
+    if (options.cwd) args.push("-c", options.cwd);
+    args.push("-P", "-F", "#{pane_id}");
+    const pane = tmux(args);
+    if (!pane.startsWith("%")) throw new Error(`Unexpected tmux split-window output: ${pane}`);
+    try {
+      tmux(["set-option", "-p", "-t", pane, "@pi_depth", String(depth)]);
+      tmux(["set-option", "-p", "-t", pane, "@pi_parent", self]);
+      if (options.title) tmux(["select-pane", "-t", pane, "-T", options.title]);
+      if (options.tag) tmux(["set-option", "-p", "-t", pane, options.tag.key, options.tag.value]);
+      rebalance(pane, before);
+      return pane;
+    } catch (error) {
+      tmux(["kill-pane", "-t", pane]);
+      throw error;
+    }
+  });
 }
 
-/** Kill a worker pane and rebalance the column it was in. */
+/** Close a worker and normalize the remaining columns, including their widths. */
 export function closeWorkerPane(paneId: string): void {
-  const panes = listWindowPanes(paneId);
-  const depth = panes.find((p) => p.paneId === paneId)?.depth;
-  const neighbor = depth === undefined ? undefined : column(panes, depth).find((p) => p.paneId !== paneId);
-  tmux(["kill-pane", "-t", paneId]);
-  if (neighbor && depth !== undefined) rebalanceColumn(neighbor.paneId, depth);
+  withWindowLock(paneId, () => {
+    const before = readWindow(paneId);
+    const neighbor = before.panes.find((p) => p.paneId !== paneId);
+    tmux(["kill-pane", "-t", paneId]);
+    if (neighbor && regionWidth(before.panes) !== undefined) rebalance(neighbor.paneId, before);
+  });
 }

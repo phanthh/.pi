@@ -35,8 +35,16 @@ full-height column per spawn depth, so a pane is always right of its spawner:
 ```
 
 Each column stacks vertically, rebalanced to equal heights on create/close;
-worker columns share the width right of pi. Only panes tagged `@pi_depth`
-count as workers — your own splits are never stacked onto or resized.
+worker columns share the width right of pi. Columns are ordered by numeric
+`@pi_depth`, even when a shallower column is recreated after its panes close.
+Only tagged panes count as workers. Your own splits retain their split tree
+in the left region; its width stays fixed while workers remain. The first
+worker column shares the window with that region; closing the final worker
+returns the full window to it.
+
+Live pane depth determines the next column, with `PI_SUBAGENT_DEPTH` as a
+fallback. Launches and resumes both propagate this depth and obey the same
+nesting cap. Layout changes are serialized across pi processes in one window.
 
 Nested delegation: an auto-exit child does not exit while it still has running
 subagents or pending `autoExit` tmux panes (exiting would kill them). Their

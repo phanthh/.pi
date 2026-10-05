@@ -27,10 +27,11 @@ Tools/CLIs:
 
 Async tasks:
 
-- You are always in tmux session. Use `tmux` for background tasks (dev servers) + subagents.
-- tmux windows (tabs) and sessions are user-managed, each a self-contained workspace. NEVER create, kill, or move windows/sessions.
+- You are always in a tmux window.
+- Do NOT use the tmux cli via bash or scripts. Control tmux strictly through the `tmux` tool only.
+- Use tmux for background tasks (dev servers) + subagents.
 - linting, formatting are short tasks -> synchronous -> run with `bash`.
-- typechecking, test running, compiling are long tasks -> asynchronous -> run with `tmux`.
+- typechecking, test running, compiling are long tasks -> asynchronous -> run via `tmux` tool.
 
 Write-it-down:
 
@@ -45,7 +46,7 @@ Hard rules:
     - Be vocal and demanding. Write your complains to ~/.pi/agent/complains.md if not already.
 - If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
-    - At most 10 subagents can run at once. Any more and `tmux_subagent` will fail.
+    - At most 5 subagents can run at once. Any more and `tmux_subagent` will fail.
     - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
     - Use `reviewer` subagents for code review whenever appropriate:
