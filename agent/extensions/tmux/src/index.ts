@@ -20,6 +20,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { closeWorkerPane, createWorkerPane, isPaneAlive } from "@pi-ext/tmux-layout";
+import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 
 interface PaneInfo {
 	name: string;
@@ -52,6 +53,15 @@ export default function (pi: ExtensionAPI) {
 	if (!inTmux || inHerdr) {
 		return;
 	}
+
+	// Windows/sessions are user-managed: block agent shell-outs that create/kill/move them.
+	pi.on("tool_call", (event) => {
+		const input = event.input as Record<string, unknown>;
+		const cmd = event.toolName === "bash" || event.toolName === "tmux" ? input.command : undefined;
+		if (typeof cmd !== "string") return;
+		const sub = findBlockedTmuxCommand(cmd);
+		if (sub) return { block: true, reason: blockReason(sub) };
+	});
 
 	let myPaneId: string | null = null;
 	let myWindowId: string | null = null;
@@ -159,6 +169,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use `tmux` run for long-running processes (dev servers, watchers, builds) instead of `bash`.",
 			"Use `bash` only for short-lived commands that complete quickly.",
+			"Never create, kill, or move tmux windows (tabs) or sessions (`tmux new-window`, `new-session`, `break-pane`, `kill-window`, ...). They are user-managed; such commands are blocked. Use this tool's panes instead.",
 			"Layout: one full-height column per spawn depth, left to right: pi | its panes (tmux tool + subagents) | their panes | … Each column stacks vertically, auto-rebalanced to equal heights.",
 		],
 		parameters: Type.Object({

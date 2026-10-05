@@ -28,6 +28,7 @@ Tools/CLIs:
 Async tasks:
 
 - You are always in tmux session. Use `tmux` for background tasks (dev servers) + subagents.
+- tmux windows (tabs) and sessions are user-managed, each a self-contained workspace. NEVER create, kill, or move windows/sessions.
 - linting, formatting are short tasks -> synchronous -> run with `bash`.
 - typechecking, test running, compiling are long tasks -> asynchronous -> run with `tmux`.
 
