@@ -3,7 +3,7 @@ name: delegate
 description: Lightweight general-purpose helper that inherits the parent model for focused delegated tasks
 model: openai-codex/gpt-6.1-sol
 thinking: high
-tools: read, bash, edit, write, lsp, codemode, tmux_subagent, tmux
+tools: read, bash, edit, write, lsp, codemode, tmux_subagent, tmux, recall
 system-prompt: append
 auto-exit: true
 spawning: true
