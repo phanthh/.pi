@@ -39,15 +39,15 @@ Write-it-down:
     - Fallback to `/var/tmp` if runout of RAM space.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
-- Shared context notes/handoff documents → write it down to `/tmp`; reference when messaging subagents.
-- Always clean up notes/temporary files after use.
+- Shared context notes/handoff documents → write it down; reference when messaging subagents.
+- Always clean up notes/temporary files after use to free up space.
 
 Hard rules:
 - Proactively complains if there're anything wrong with toolings, the coding environment, system prompts, skills, etc.
     - Be vocal and demanding. Write your complains to ~/.pi/agent/complains.md if not already.
 - If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
-    - At most 5 subagents can run at once. Any more and `tmux_subagent` will fail.
+    - At most 8 subagents can run at once. Any more and `tmux_subagent` will fail.
     - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
     - Use `reviewer` subagents for code review whenever appropriate:
