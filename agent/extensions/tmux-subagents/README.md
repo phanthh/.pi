@@ -63,8 +63,9 @@ results steer back, trigger a turn, and the child exits after that turn.
 | `{ action: "stop", id }` | Kill the child pane, return its last output |
 | `{ action: "resume", sessionPath, message? }` | Restart a previous child session |
 
-Launch parameters: `name`, `task`, `agent`, `model`, `tools`, `skills`,
-`systemPrompt`, `cwd`, `fork`, `interactive`.
+Launch parameters: `name`, `task`, `agent`, `tools`, `skills`,
+`systemPrompt`, `cwd`, `fork`, `interactive`. No model override: the child
+uses the agent definition's `model`/`thinking`, else the parent's.
 
 Commands: `/subagent <agent> <task>`, `/iterate <task>` (forks this session into a pane).
 
@@ -72,7 +73,8 @@ Commands: `/subagent <agent> <task>`, `/iterate <task>` (forks this session into
 
 Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
-- `subagent_done` — finish; last assistant message becomes the summary.
+- `subagent_done({ message? })` — finish; `message` is the summary, else the
+  last assistant text.
 - `caller_ping` — ask the parent for help, exit; parent can `resume` the session.
 - Ctrl+J toggles the child's identity/tools widget.
 
@@ -89,10 +91,10 @@ tools, even if project defaults omit it or disable the built-in extension.
 
 | Agent | Model | Role |
 | --- | --- | --- |
-| `scout` | `anthropic/claude-opus-5:low` | Read-only evidence gathering |
-| `worker` | `anthropic/claude-opus-5:medium` | Small approved implementation tasks |
-| `delegate` | inherits the orchestrator's model and thinking level | General helper |
-| `researcher` | `anthropic/claude-opus-5:medium` | External web research → sourced brief |
+| `scout` | `openai-codex/gpt-6-luna:high` | Read-only evidence gathering |
+| `delegate` | `openai-codex/gpt-6.1-sol:high` | General helper; no `tools` allowlist, so MCP tools (agent-browser, …) stay reachable; `ask`/`goal` denied |
+| `researcher` | `openai-codex/gpt-6-luna:high` | External web research → sourced brief |
+| `reviewer` | `openai-codex/gpt-6.1-sol:high` | Read-only code review → evidence-backed findings |
 
 Precedence: `.pi/agents/` (project) > `~/.pi/agent/agents/` (global) > bundled.
 
@@ -101,8 +103,10 @@ Frontmatter: `name`, `description`, `model`, `thinking`, `tools`, `skills`,
 (`standalone`/`lineage-only`/`fork`), `auto-exit`, `interactive`, `spawning`,
 `deny-tools`, `cwd`, `disable-model-invocation`.
 
-`spawning: false` sets `PI_DENY_TOOLS=tmux_subagent` in the child, so it cannot
-delegate further. Independently, launches are capped at `PI_SUBAGENT_MAX_DEPTH`
+`deny-tools` (plus `tmux_subagent` when `spawning: false`) is passed as
+`--exclude-tools` and `PI_DENY_TOOLS`, so the child cannot call those tools.
+Use it instead of `tools` when a role must keep MCP tools: allowlists match
+exact names only, so MCP tools are unreachable unless listed one by one. Independently, launches are capped at `PI_SUBAGENT_MAX_DEPTH`
 (default 2).
 
 ## Env
@@ -122,7 +126,7 @@ tmux.ts      pane primitives + exit polling
 activity.ts  child activity snapshot (write/read/validate)
 status.ts    snapshot → status kind, transitions, status lines
 session.ts   child session seeding, summary extraction
-agents/      scout, worker, delegate, researcher
+agents/      scout, delegate, researcher, reviewer
 ```
 
 Checks from the extensions workspace: `pnpm --filter pi-tmux-subagents test` and `pnpm check`.

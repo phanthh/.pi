@@ -36,6 +36,7 @@ Async tasks:
 Write-it-down:
 
 - `/tmp` = public read-write scratchpad shared across all subagents; files in there survive summary/compaction.
+    - Fallback to `/var/tmp` if runout of RAM space.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Shared context notes/handoff documents → write it down to `/tmp`; reference when messaging subagents.

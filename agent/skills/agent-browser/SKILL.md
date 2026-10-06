@@ -7,7 +7,6 @@ description: Browser automation and UI testing via agent-browser MCP tools in co
 
 MCP server `agent-browser` (config: `~/.pi/agent/mcp.json`, profile `all`). Tools are not declared to you; call them from `codemode` scripts as `tools.mcp__agent_browser__agent_browser_<cmd>`.
 CLI (`agent-browser ...`) drives the same daemon; use it for one-offs or flags without typed fields.
-
 ## Discover
 
 - Workflow guide (version-matched): `agent-browser skills get core` (add `--full` for command reference).

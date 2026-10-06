@@ -214,7 +214,6 @@ export interface LaunchParams {
   name: string;
   task: string;
   agent?: string;
-  model?: string;
   tools?: string;
   skills?: string;
   systemPrompt?: string;
@@ -548,7 +547,7 @@ function startStatusRefresh(pi: ExtensionAPI) {
 interface LaunchContext {
   sessionManager: { getSessionFile(): string | null; getSessionId(): string; getSessionDir(): string };
   cwd: string;
-  /** Parent model/thinking, used when neither the call nor the agent pins one. */
+  /** Parent model/thinking, used when the agent definition pins no model. */
   inheritedModel?: string;
   inheritedThinking?: string;
 }
@@ -560,7 +559,8 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
   if (params.agent && !agentDefs) throw new Error(`Agent "${params.agent}" not found.`);
 
-  const pinnedModel = params.model ?? agentDefs?.model;
+  // Model comes only from the agent definition (or the parent); callers cannot override it.
+  const pinnedModel = agentDefs?.model;
   const effectiveModel = pinnedModel ?? ctx.inheritedModel;
   const effectiveThinking = agentDefs?.thinking ?? (pinnedModel ? undefined : ctx.inheritedThinking);
   const effectiveTools = params.tools ?? agentDefs?.tools;
@@ -636,6 +636,8 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
 
   const toolAllowlist = buildChildToolAllowlist(effectiveTools);
   if (toolAllowlist) parts.push("--tools", shellEscape(toolAllowlist));
+  const denySet = resolveDenyTools(agentDefs);
+  if (denySet.size > 0) parts.push("--exclude-tools", shellEscape([...denySet].join(",")));
 
   const envParts: string[] = [];
   if (localAgentDir && existsSync(localAgentDir)) {
@@ -643,7 +645,6 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   } else if (process.env.PI_CODING_AGENT_DIR) {
     envParts.push(`PI_CODING_AGENT_DIR=${shellEscape(process.env.PI_CODING_AGENT_DIR)}`);
   }
-  const denySet = resolveDenyTools(agentDefs);
   if (denySet.size > 0) envParts.push(`PI_DENY_TOOLS=${shellEscape([...denySet].join(","))}`);
   envParts.push(`PI_SUBAGENT_NAME=${shellEscape(params.name)}`);
   if (params.agent) envParts.push(`PI_SUBAGENT_AGENT=${shellEscape(params.agent)}`);
@@ -883,8 +884,7 @@ const SubagentParams = Type.Object({
   ),
   name: Type.Optional(Type.String({ description: "Display name for launch/resume (pane title, widget label)" })),
   task: Type.Optional(Type.String({ description: "Task prompt for launch" })),
-  agent: Type.Optional(Type.String({ description: "Agent definition to load defaults from, e.g. scout, worker, delegate, researcher" })),
-  model: Type.Optional(Type.String({ description: "Model override; defaults to the agent's model, else this session's model" })),
+  agent: Type.Optional(Type.String({ description: "Agent definition to load defaults from, e.g. scout, delegate, researcher, reviewer" })),
   tools: Type.Optional(Type.String({ description: "Comma-separated tool allowlist override" })),
   skills: Type.Optional(Type.String({ description: "Comma-separated skills to auto-load" })),
   systemPrompt: Type.Optional(Type.String({ description: "Extra role instructions when no agent is given" })),

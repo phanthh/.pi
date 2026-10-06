@@ -2,6 +2,9 @@
 	"name": "pi-tmux",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"test": "node --test src/guard.test.ts"
+	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},

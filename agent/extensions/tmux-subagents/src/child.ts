@@ -246,8 +246,10 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent Done",
     description:
       "Call when your task is complete. Closes this session and returns your results to the caller. " +
-      "Your LAST assistant message before this call becomes the summary.",
-    parameters: Type.Object({}),
+      "Pass your final result as `message`; without it, your LAST assistant text becomes the summary.",
+    parameters: Type.Object({
+      message: Type.Optional(Type.String({ description: "Final result returned to the caller" })),
+    }),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const children = runningChildCount();
       if (children > 0) {
