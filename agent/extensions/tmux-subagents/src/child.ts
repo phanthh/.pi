@@ -60,7 +60,7 @@ export function findLatestAssistantError(messages: any[] | undefined): SubagentE
 }
 
 /**
- * Own subagents + pending autoExit tmux panes whose results will steer back.
+ * Own subagents + pending tmux panes whose results will steer back.
  * Read via Symbol.for keys, not imports: index.ts has load-time side effects
  * and the tmux extension is a separate package.
  */
@@ -254,7 +254,7 @@ export default function (pi: ExtensionAPI) {
       const children = runningChildCount();
       if (children > 0) {
         throw new Error(
-          `${children} of your subagent(s)/autoExit tmux pane(s) still running; exiting now would lose their results. ` +
+          `${children} of your subagent(s)/tmux pane(s) still running; exiting now would lose their results. ` +
             "End your turn and wait — their results steer back automatically — then call subagent_done.",
         );
       }

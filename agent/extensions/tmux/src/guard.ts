@@ -68,7 +68,7 @@ export function findBlockedTmuxCommand(command: string): string | undefined {
 export function blockReason(sub: string): string {
 	return (
 		`Blocked \`tmux ${sub}\`: tmux windows (tabs) and sessions are created/killed manually by the user only. ` +
-		"Use the `tmux` tool (action: run, autoExit for one-shot jobs) or `tmux_subagent` — they add panes in the current window. " +
+		"Use the `tmux` tool (action: run; completion is always automatic) or `tmux_subagent` — they add panes in the current window. " +
 		"For scratch tmux testing use an isolated server (`tmux -L <name> ...`)."
 	);
 }

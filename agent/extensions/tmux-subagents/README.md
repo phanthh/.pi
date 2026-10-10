@@ -47,8 +47,9 @@ fallback. Launches and resumes both propagate this depth and obey the same
 nesting cap. Layout changes are serialized across pi processes in one window.
 
 Nested delegation: an auto-exit child does not exit while it still has running
-subagents or pending `autoExit` tmux panes (exiting would kill them). Their
-results steer back, trigger a turn, and the child exits after that turn.
+subagents or pending tmux panes (exiting would kill them). Every tmux command
+closes its pane on completion and delivers a snapshot path in the session folder.
+Results steer back, trigger a turn, and the child exits after that turn.
 `subagent_done` refuses for the same reason.
 
 ## Actions

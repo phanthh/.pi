@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.0.3",
+  "lastChangelogVersion": "1.1.0",
   "theme": "tokyonight",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -11,7 +11,7 @@
   },
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "terminal": {
     "showTerminalProgress": true
   },
@@ -32,7 +32,7 @@
   "showCacheMissNotices": true,
   "enabledModels": [
     "openai-codex/gpt-6.1-sol",
-    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6-astra",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-opus-5-5",
     "opencode-go/space-bunny-free"
@@ -40,5 +40,6 @@
   "defaultTools": [
     "+codemode"
   ],
-  "deviceId": "930ad8ff-c58d-4a02-b7e8-20127ad05db6"
+  "deviceId": "930ad8ff-c58d-4a02-b7e8-20127ad05db6",
+  "packages": []
 }
