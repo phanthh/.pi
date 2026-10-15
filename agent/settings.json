@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.1.0",
+  "lastChangelogVersion": "1.2.0",
   "theme": "tokyonight",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -28,14 +28,14 @@
   "branchSummary": {
     "skipPrompt": true
   },
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "showCacheMissNotices": true,
   "enabledModels": [
+    "anthropic/claude-opus-5-5",
     "openai-codex/gpt-6.1-sol",
     "openai-codex/gpt-6-astra",
-    "openai-codex/gpt-6-luna",
-    "anthropic/claude-opus-5-5",
-    "opencode-go/space-bunny-free"
+    "opencode-go/glm-5.3-flash",
+    "openai-codex/gpt-6-luna"
   ],
   "defaultTools": [
     "+codemode"

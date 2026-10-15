@@ -12,8 +12,29 @@ export type LayoutCell = PaneCell | (Rect & {
   children: LayoutCell[];
 });
 
-/** tmux format: checksum,WxH,x,y{columns} / [rows]. */
+/** tmux >= 3.8 format: {"V":2,"L":{"t":"p"|"h"|"v","w","h","x","y","I"?,"c"?}}. */
+function parseJsonLayout(layout: string): LayoutCell {
+  const invalid = () => new Error(`Invalid tmux layout: ${layout}`);
+  function convert(cell: unknown): LayoutCell {
+    if (!cell || typeof cell !== "object" || !("t" in cell) || !("w" in cell) || !("h" in cell) || !("x" in cell) || !("y" in cell)) throw invalid();
+    const { t, w, h, x, y } = cell;
+    if (typeof w !== "number" || typeof h !== "number" || typeof x !== "number" || typeof y !== "number") throw invalid();
+    const rect: Rect = { width: w, height: h, left: x, top: y };
+    if (t === "p") {
+      if (!("I" in cell) || typeof cell.I !== "string") throw new Error(`Missing pane in tmux layout: ${layout}`);
+      return { ...rect, paneId: cell.I };
+    }
+    if ((t !== "h" && t !== "v") || !("c" in cell) || !Array.isArray(cell.c) || cell.c.length === 0) throw invalid();
+    return { ...rect, axis: t === "h" ? "horizontal" : "vertical", children: cell.c.map(convert) };
+  }
+  const value: unknown = JSON.parse(layout);
+  if (!value || typeof value !== "object" || !("L" in value)) throw invalid();
+  return convert(value.L);
+}
+
+/** tmux format: checksum,WxH,x,y{columns} / [rows], or the JSON format of tmux >= 3.8. */
 export function parseLayout(layout: string): LayoutCell {
+  if (layout.startsWith("{")) return parseJsonLayout(layout);
   let offset = layout.indexOf(",") + 1;
   function parse(): LayoutCell {
     const match = /^(\d+)x(\d+),(\d+),(\d+)/.exec(layout.slice(offset));

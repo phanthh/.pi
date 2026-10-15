@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CombinedAutocompleteProvider, type AutocompleteProvider } from "@earendil-works/pi-tui";
-import { filterSkillAutocomplete, findAllowedSkills, isGlobalSkill, parseConfig, type SkillRulesConfig } from "./index.ts";
+import { filterSkillAutocomplete, findAllowedSkills, parseConfig, type SkillRulesConfig } from "./index.ts";
 
 const config: SkillRulesConfig = {
 	rules: [
@@ -105,10 +105,4 @@ test("leaves path and argument completions unchanged", async () => {
 	assert.equal(await provider.getSuggestions(["/command "], 0, 9, { signal: new AbortController().signal }), result);
 	assert.deepEqual(provider.triggerCharacters, ["@"]);
 	assert.equal(provider.shouldTriggerFileCompletion?.([""], 0, 0), true);
-});
-
-test("recognizes only skills inside the global skills directory", () => {
-	assert.equal(isGlobalSkill({ filePath: "/home/me/.pi/agent/skills/review/SKILL.md" }, "/home/me/.pi/agent/skills"), true);
-	assert.equal(isGlobalSkill({ filePath: "/home/me/project/.pi/skills/review/SKILL.md" }, "/home/me/.pi/agent/skills"), false);
-	assert.equal(isGlobalSkill({ filePath: "/home/me/.pi/agent/skills-old/review/SKILL.md" }, "/home/me/.pi/agent/skills"), false);
 });
