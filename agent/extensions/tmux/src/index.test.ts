@@ -226,6 +226,15 @@ test("runner reports failures and waits for background commands, including expli
 	}
 });
 
+test("runner disables interactive pagers", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run("printf '%s|%s|%s' \"$PAGER\" \"$GIT_PAGER\" \"$GH_PAGER\"");
+	const script = await readFile(join(run.fullOutputPath, "..", "command.sh"), "utf8");
+	const { stdout } = await exec("bash", ["-c", `tmux() { :; }\n${script}`]);
+	assert.equal(stdout, "cat|cat|cat");
+	await h.complete(run.paneId, 0);
+});
+
 test("C-c still signals completion with exit 130", { timeout: 5000 }, async (t) => {
 	const h = await harness(t);
 	const run = await h.run("bash -c 'printf ready; exec sleep 60'");

@@ -604,7 +604,7 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   // Fork mode inherits the parent conversation, so the task goes in verbatim.
   // Blank sessions need the wrapper instructions and an artifact handoff.
   const modeHint = agentDefs?.autoExit
-    ? "Complete your task autonomously."
+    ? AUTO_EXIT_HINT
     : "Complete your task. When finished, call the subagent_done tool. The user can interact with you at any time.";
   const summaryInstruction = agentDefs?.autoExit
     ? "Your FINAL assistant message should summarize what you accomplished."
@@ -700,8 +700,18 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   return running;
 }
 
+export const AUTO_EXIT_HINT =
+  "Complete your task autonomously. Ending your turn ends your run and returns your last message as the result, " +
+  "unless your own subagents/tmux panes are still running (their results wake you). " +
+  "Never end your turn to report progress, coordinate, or say you are continuing. " +
+  "If the parent must act or decide, call caller_ping, then end your turn: you stay alive and the reply arrives as your next message.";
+
 /** Poll a launched child to completion, extract its summary, close its pane. */
-async function watchSubagent(running: RunningSubagent, signal: AbortSignal): Promise<SubagentResult> {
+async function watchSubagent(
+  running: RunningSubagent,
+  signal: AbortSignal,
+  onPing?: (ping: { name: string; message: string }) => void,
+): Promise<SubagentResult> {
   const { name, task, surface, startTime, sessionFile } = running;
 
   try {
@@ -709,6 +719,7 @@ async function watchSubagent(running: RunningSubagent, signal: AbortSignal): Pro
       interval: 1000,
       sessionFile,
       onTick: () => observeRunningSubagent(running),
+      onPing,
     });
 
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -785,6 +796,18 @@ export function resolveResultPresentation(
     : `Sub-agent "${name}" completed (${formatElapsed(result.elapsed)}).\n\n${result.summary}${sessionRef}`;
 }
 
+export function formatLivePing(
+  running: Pick<RunningSubagent, "id" | "name">,
+  ping: { name: string; message: string },
+  elapsedSeconds: number,
+): string {
+  return (
+    `Sub-agent "${ping.name}" [${running.id}] needs help (${formatElapsed(elapsedSeconds)}):\n\n${ping.message}\n\n` +
+    `It is still running and waiting for your answer. Reply with ` +
+    `tmux_subagent({ action: "send", id: "${running.id}", message: "..." }); it then continues its task.`
+  );
+}
+
 /** Wire the background watcher: results and pings steer back into this session. */
 function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
   const abort = new AbortController();
@@ -792,11 +815,34 @@ function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
   startWidgetRefresh();
   startStatusRefresh(pi);
 
-  watchSubagent(running, abort.signal)
+  // Live ping: the child stays alive awaiting `send`, so the watcher keeps running.
+  const onPing = (ping: { name: string; message: string }) => {
+    if (running.stopRequested) return;
+    const elapsed = Math.floor((Date.now() - running.startTime) / 1000);
+    pi.sendMessage(
+      {
+        customType: "subagent_ping",
+        content: formatLivePing(running, ping, elapsed),
+        display: true,
+        details: {
+          name: ping.name,
+          message: ping.message,
+          agent: running.agent,
+          id: running.id,
+          sessionFile: running.sessionFile,
+          live: true,
+        },
+      },
+      { triggerTurn: true, deliverAs: "steer" },
+    );
+  };
+
+  watchSubagent(running, abort.signal, onPing)
     .then((result) => {
       updateWidget();
       if (running.stopRequested) return;
 
+      // Legacy: children loaded before the live-ping change exit on ping.
       if (result.ping) {
         const sessionRef = `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`;
         pi.sendMessage(
@@ -969,7 +1015,8 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         if (list.length === 0) return reply("No agent definitions found.", { agents: [] });
         const lines = list.map((a) => {
           const badge = a.source === "bundled" ? "" : ` (${a.source})`;
-          return `• ${a.name}${badge}${a.model ? ` [${a.model}]` : ""}${a.description ? ` — ${a.description}` : ""}`;
+          const tools = a.tools ? `tools: ${a.tools}` : `tools: defaults${a.denyTools ? ` minus ${a.denyTools}` : ""}`;
+          return `• ${a.name}${badge}${a.model ? ` [${a.model}]` : ""}${a.description ? ` — ${a.description}` : ""} (${tools})`;
         });
         return reply(lines.join("\n"), { agents: list });
       }

@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import register from "./src/index.ts";
+
+const realTmp = tmpdir();
+const scratch = mkdtempSync(join(realTmp, "pi-web-search-test-"));
+process.env.TMPDIR = scratch;
+process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS = "0";
 
 let tool;
 register({
@@ -116,11 +124,36 @@ try {
 		render({ content: [{ type: "text", text: "HTTP 403" }], isError: true }),
 		/HTTP 403/,
 	);
+
+	// Throttle: parallel calls start at least minInterval apart.
+	process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS = "150";
+	const starts = [];
+	globalThis.fetch = async () => {
+		starts.push(Date.now());
+		return Response.json({ results: [] });
+	};
+	await Promise.all([search(), search(), search(), search()]);
+	starts.sort((a, b) => a - b);
+	for (let i = 1; i < starts.length; i++) {
+		assert.ok(starts[i] - starts[i - 1] >= 140, `spacing ${starts}`);
+	}
+	// Abort while queued rejects without fetching.
+	const queued = new AbortController();
+	const before = starts.length;
+	const pending = search(undefined, queued.signal);
+	queued.abort();
+	await assert.rejects(pending);
+	assert.equal(starts.length, before);
+	process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS = "0";
+
 	console.log(
-		"web-search selftest: PASS (results, dedup, limits, params, engine errors, invalid responses, HTTP/network errors, cancellation, rendering)",
+		"web-search selftest: PASS (results, dedup, limits, params, engine errors, invalid responses, HTTP/network errors, cancellation, rendering, throttle)",
 	);
 } finally {
 	globalThis.fetch = realFetch;
+	process.env.TMPDIR = realTmp;
+	delete process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS;
+	rmSync(scratch, { recursive: true, force: true });
 }
 
 if (process.argv.includes("--live")) {

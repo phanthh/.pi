@@ -499,7 +499,11 @@ export function createSubagentActivityRecorder(params: {
       }, "immediate");
     },
     callerPing() {
-      markDone("caller_ping");
+      record("caller_ping", (current, observedAt) => {
+        clearActiveState(current);
+        current.phase = "waiting";
+        current.waitingSince = observedAt;
+      }, "immediate");
     },
     subagentDone() {
       markDone("subagent_done");

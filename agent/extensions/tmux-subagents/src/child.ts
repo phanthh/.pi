@@ -3,7 +3,7 @@
  *
  * - Writes the activity snapshot the parent widget reads (liveness).
  * - `subagent_done` — self-terminate and hand the last assistant message back.
- * - `caller_ping` — ask the parent for help, then exit for later resume.
+ * - `caller_ping` — ask the parent for help; session stays alive until the reply arrives.
  * - Identity/tools widget above the editor (Ctrl+J toggles).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -26,7 +26,10 @@ export function shouldAutoExitOnAgentEnd(
   _userTookOver: boolean,
   messages: any[] | undefined,
   runningChildren = 0,
+  awaitingReply = false,
 ): boolean {
+  // A caller_ping is a question, not a result: wait for the parent's `send`.
+  if (awaitingReply) return false;
   // Exiting would abort our own children's watchers and kill their panes;
   // their results steer back in and trigger the turn that ends us.
   if (runningChildren > 0) return false;
@@ -68,6 +71,15 @@ export function runningChildCount(): number {
   const g = globalThis as any;
   const size = (key: string) => (g[Symbol.for(key)] as Map<string, unknown> | undefined)?.size ?? 0;
   return size("pi-tmux-subagents/running") + size("pi-tmux/auto-exit-watchers");
+}
+
+/** Exiting now would kill pending children/panes and strand their results. */
+export function pendingChildrenError(action: string, children = runningChildCount()): Error | null {
+  if (children <= 0) return null;
+  return new Error(
+    `${children} of your subagent(s)/tmux pane(s) still running; ${action} now would exit and lose their results. ` +
+      "End your turn instead — this session stays alive and their results steer back automatically.",
+  );
 }
 
 export function parseDeniedTools(rawValue: string | undefined): string[] {
@@ -129,6 +141,7 @@ export default function (pi: ExtensionAPI) {
 
   let userTookOver = false;
   let agentStarted = false;
+  let awaitingReply = false;
 
   pi.on("session_start", (_event, ctx) => {
     // Resume and project defaults can omit codemode; keep the role's other tools unchanged.
@@ -142,6 +155,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("input", () => {
     recorder.input();
+    // Any new input (normally the parent's `send`) answers a pending ping.
+    if (agentStarted) awaitingReply = false;
     // The initial task message is not a takeover; only inputs after the first run are.
     if (!shouldMarkUserTookOver(agentStarted)) return;
     userTookOver = true;
@@ -156,7 +171,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_end", (event, ctx) => {
     const messages = (event as any).messages as any[] | undefined;
-    const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages, runningChildCount());
+    const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages, runningChildCount(), awaitingReply);
 
     if (shouldExit) {
       // Surface retry-exhausted turns through the .exit sidecar; without it the
@@ -211,9 +226,9 @@ export default function (pi: ExtensionAPI) {
     name: "caller_ping",
     label: "Caller Ping",
     description:
-      "Send a help request to the parent agent and exit this session. " +
-      "The parent is notified with your message and can resume this session with a response. " +
-      "Use when you are stuck, need clarification, or need the parent to act.",
+      "Ask the parent agent for help or a decision. This session stays alive: after calling, end your turn; " +
+      "the parent's reply arrives as your next message and you continue the task. " +
+      "Use only when blocked and the parent must act or decide. Not for progress updates or FYIs.",
     parameters: Type.Object({
       message: Type.String({ description: "What you need help with" }),
     }),
@@ -222,21 +237,26 @@ export default function (pi: ExtensionAPI) {
       if (!sessionFile) {
         throw new Error("caller_ping is only available in subagent contexts (PI_SUBAGENT_SESSION unset).");
       }
-
+      awaitingReply = true;
       recorder.callerPing();
+      // `.ping` (not `.exit`): the parent keeps watching and answers with `send`.
       writeFileSync(
-        `${sessionFile}.exit`,
+        `${sessionFile}.ping`,
         JSON.stringify({
           type: "ping",
           name: process.env.PI_SUBAGENT_NAME ?? "subagent",
           message: params.message,
         }),
       );
-
-      ctx.shutdown();
       return {
-        content: [{ type: "text", text: "Ping sent. Session exits and the parent is notified." }],
+        content: [
+          {
+            type: "text",
+            text: "Ping sent. End your turn now; the parent's reply arrives as your next message. This session stays alive.",
+          },
+        ],
         details: {},
+        terminate: true,
       };
     },
   });
@@ -251,13 +271,8 @@ export default function (pi: ExtensionAPI) {
       message: Type.Optional(Type.String({ description: "Final result returned to the caller" })),
     }),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const children = runningChildCount();
-      if (children > 0) {
-        throw new Error(
-          `${children} of your subagent(s)/tmux pane(s) still running; exiting now would lose their results. ` +
-            "End your turn and wait — their results steer back automatically — then call subagent_done.",
-        );
-      }
+      const pending = pendingChildrenError("finishing");
+      if (pending) throw new Error(`${pending.message} Then call subagent_done.`);
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
       recorder.subagentDone();
       if (sessionFile) writeFileSync(`${sessionFile}.exit`, JSON.stringify({ type: "done" }));

@@ -2,6 +2,7 @@
  * web_search — minimal SearXNG search tool.
  * Base URL from ~/.pi/agent/web-search.json ({ "searxngBaseUrl": ... }),
  * else SEARXNG_URL env, else http://localhost:8888.
+ * Requests are spaced globally across pi processes (see throttle.ts).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,11 +12,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { throttle } from "./throttle.ts";
 
 const DEFAULT_BASE_URL = "http://localhost:8888";
 const DEFAULT_MAX_RESULTS = 8;
 const MAX_RESULTS_LIMIT = 50;
 const TIMEOUT_MS = 15_000;
+const DEFAULT_MIN_INTERVAL_MS = 1_500;
 
 interface SearchResult {
 	title: string;
@@ -34,18 +37,33 @@ interface SearchDetails {
 	engineFailures?: string[];
 }
 
-function resolveBaseUrl(): string {
+function readConfig(): Record<string, unknown> {
 	try {
-		const config = JSON.parse(
+		return JSON.parse(
 			readFileSync(join(getAgentDir(), "web-search.json"), "utf-8"),
 		);
-		if (typeof config.searxngBaseUrl === "string" && config.searxngBaseUrl) {
-			return config.searxngBaseUrl.replace(/\/+$/, "");
-		}
 	} catch {
-		/* no config */
+		return {};
 	}
-	return (process.env.SEARXNG_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+}
+
+function resolveBaseUrl(config: Record<string, unknown>): string {
+	const configured =
+		typeof config.searxngBaseUrl === "string" && config.searxngBaseUrl
+			? config.searxngBaseUrl
+			: process.env.SEARXNG_URL || DEFAULT_BASE_URL;
+	return configured.replace(/\/+$/, "");
+}
+
+/** Min spacing between request starts across all pi processes on this host. */
+function resolveMinInterval(config: Record<string, unknown>): number {
+	const env = Number(process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS);
+	if (process.env.PI_WEB_SEARCH_MIN_INTERVAL_MS && Number.isFinite(env))
+		return Math.max(0, env);
+	return typeof config.minIntervalMs === "number" &&
+		Number.isFinite(config.minIntervalMs)
+		? Math.max(0, config.minIntervalMs)
+		: DEFAULT_MIN_INTERVAL_MS;
 }
 
 function asStrings(value: unknown): string[] | undefined {
@@ -106,7 +124,8 @@ export default function (pi: ExtensionAPI) {
 		}),
 
 		async execute(_toolCallId, params, signal) {
-			const baseUrl = resolveBaseUrl();
+			const config = readConfig();
+			const baseUrl = resolveBaseUrl(config);
 			const maxResults = Math.min(
 				MAX_RESULTS_LIMIT,
 				Math.max(1, Math.floor(params.max_results ?? DEFAULT_MAX_RESULTS)),
@@ -123,6 +142,8 @@ export default function (pi: ExtensionAPI) {
 				url.searchParams.set("categories", params.categories);
 			if (params.time_range)
 				url.searchParams.set("time_range", params.time_range);
+
+			await throttle(resolveMinInterval(config), signal);
 
 			let response: Response;
 			try {

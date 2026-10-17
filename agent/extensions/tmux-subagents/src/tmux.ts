@@ -154,6 +154,20 @@ function readExitSidecar(sessionFile?: string): PollResult | null {
   }
 }
 
+/** Non-terminal `.ping` sidecar from caller_ping; consumed once. */
+function readPingSidecar(sessionFile?: string): { name: string; message: string } | null {
+  if (!sessionFile) return null;
+  try {
+    const pingFile = `${sessionFile}.ping`;
+    if (!existsSync(pingFile)) return null;
+    const data = JSON.parse(readFileSync(pingFile, "utf8"));
+    rmSync(pingFile, { force: true });
+    return { name: String(data?.name ?? "subagent"), message: String(data?.message ?? "") };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Poll until the child exits: `.exit` sidecar first (clean exits), then the
  * shell sentinel echoed in the pane (crashes), then pane death (user killed it).
@@ -161,12 +175,20 @@ function readExitSidecar(sessionFile?: string): PollResult | null {
 export async function pollForExit(
   surface: string,
   signal: AbortSignal,
-  options: { interval: number; sessionFile?: string; onTick?: (elapsed: number) => void },
+  options: {
+    interval: number;
+    sessionFile?: string;
+    onTick?: (elapsed: number) => void;
+    onPing?: (ping: { name: string; message: string }) => void;
+  },
 ): Promise<PollResult> {
   const start = Date.now();
 
   for (;;) {
     if (signal.aborted) throw new Error("Aborted while waiting for subagent to finish");
+
+    const ping = readPingSidecar(options.sessionFile);
+    if (ping) options.onPing?.(ping);
 
     const sidecar = readExitSidecar(options.sessionFile);
     if (sidecar) return sidecar;

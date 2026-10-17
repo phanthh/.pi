@@ -76,7 +76,12 @@ Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
 - `subagent_done({ message? })` — finish; `message` is the summary, else the
   last assistant text.
-- `caller_ping` — ask the parent for help, exit; parent can `resume` the session.
+- `caller_ping({ message })` — ask the parent for help. The child stays alive:
+  it writes a `.ping` sidecar, ends its turn, and does not auto-exit. The parent
+  gets a "needs help" steer naming the child id and answers with
+  `{ action: "send", id, message }`; that input clears the wait and the child
+  continues. Auto-exit children are told that ending a turn ends the run, so
+  progress/coordination notes go to files, not end-of-turn messages.
 - Ctrl+J toggles the child's identity/tools widget.
 
 A `tools` allowlist (param or frontmatter) is passed as `--tools`, which replaces
@@ -94,7 +99,7 @@ tools, even if project defaults omit it or disable the built-in extension.
 | --- | --- | --- |
 | `scout` | `openai-codex/gpt-6-luna:high` | Read-only evidence gathering |
 | `delegate` | `openai-codex/gpt-6.1-sol:high` | General helper; no `tools` allowlist, so MCP tools (agent-browser, …) stay reachable; `ask`/`goal` denied |
-| `researcher` | `openai-codex/gpt-6-luna:high` | External web research → sourced brief |
+| `researcher` | `openai-codex/gpt-6-luna:high` | External web research → sourced brief; can `read` handoff files |
 | `reviewer` | `openai-codex/gpt-6.1-sol:high` | Read-only code review → evidence-backed findings |
 
 Precedence: `.pi/agents/` (project) > `~/.pi/agent/agents/` (global) > bundled.
