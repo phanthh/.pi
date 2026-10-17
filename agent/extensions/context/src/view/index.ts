@@ -92,7 +92,8 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime, live?: Live
 	});
 
 	pi.on("before_agent_start", (event) => {
-		probe.beginRun(event.prompt);
+		// Probes are empty user prompts; custom-message runs never are.
+		if (event.messageType === "user") probe.beginRun(event.prompt);
 		// The chained prompt here already carries additions from extensions loaded
 		// earlier; anything the context event adds came from extensions after us.
 		capture.prepare(event.systemPromptOptions, event.systemPrompt);
