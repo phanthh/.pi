@@ -81,7 +81,9 @@ Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
   gets a "needs help" steer naming the child id and answers with
   `{ action: "send", id, message }`; that input clears the wait and the child
   continues. Auto-exit children are told that ending a turn ends the run, so
-  progress/coordination notes go to files, not end-of-turn messages.
+  progress/coordination notes go to files, not end-of-turn messages. Children
+  waiting on their own tmux panes/subagents must not ping: they stay alive
+  until those results arrive.
 - Ctrl+J toggles the child's identity/tools widget.
 
 A `tools` allowlist (param or frontmatter) is passed as `--tools`, which replaces
@@ -93,11 +95,13 @@ children use `defaultTools` from settings. On session start (including reload
 and resume), `child.ts` activates codemode without changing the other active
 tools, even if project defaults omit it or disable the built-in extension.
 
+Every task prompt (launch and fork) starts with `Current date: YYYY-MM-DD (Weekday)`.
+
 ## Bundled agents
 
 | Agent | Model | Role |
 | --- | --- | --- |
-| `scout` | `openai-codex/gpt-6-luna:high` | Read-only evidence gathering |
+| `scout` | `openai-codex/gpt-6-luna:high` | Read-only evidence gathering; may `write` reports under `/tmp` / `/var/tmp` only |
 | `delegate` | `openai-codex/gpt-6.1-sol:high` | General helper; no `tools` allowlist, so MCP tools (agent-browser, …) stay reachable; `ask`/`goal` denied |
 | `researcher` | `openai-codex/gpt-6-luna:high` | External web research → sourced brief; can `read` handoff files |
 | `reviewer` | `openai-codex/gpt-6.1-sol:high` | Read-only code review → evidence-backed findings |

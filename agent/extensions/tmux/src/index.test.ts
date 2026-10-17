@@ -18,9 +18,9 @@ const closed: string[] = [];
 let nextPaneId = 1;
 mock.module("@pi-ext/tmux-layout", {
 	namedExports: {
-		createWorkerPane: ({ title }: { title: string }) => {
+		createWorkerPane: ({ title, command }: { title: string; command: string }) => {
 			const id = `%${nextPaneId++}`;
-			panes.set(id, { name: title, content: "initial output\n" });
+			panes.set(id, { name: title, content: "initial output\n", shellCommand: command });
 			return id;
 		},
 		isPaneAlive: (id: string) => panes.has(id),
@@ -51,22 +51,28 @@ async function harness(t: TestContext) {
 		if (oldHerdr !== undefined) process.env.HERDR_ENV = oldHerdr;
 		panes.clear();
 	});
+	const g = globalThis as any;
+	clearInterval(g[Symbol.for("pi-tmux/state")]?.sweep);
+	delete g[Symbol.for("pi-tmux/state")];
 	let tool!: ToolDefinition;
 	let start!: () => Promise<void>;
 	const waiting = new Map<string, (result: typeof success) => void>();
 	const messages: Array<{ content: string; details: Record<string, any> }> = [];
 	let onMessage: (() => void) | undefined;
 	let captureFails = false;
-	const pi = {
+	let generation = 0;
+	const makePi = (gen = ++generation) => ({
 		on(name: string, handler: () => Promise<void>) { if (name === "session_start") start = handler; },
 		registerTool(value: ToolDefinition) { tool = value; },
 		registerMessageRenderer() {},
 		sendMessage(message: (typeof messages)[number], options: { triggerTurn: boolean; deliverAs: string }) {
+			if (gen !== generation) throw new Error("stale extension ctx");
 			assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
 			messages.push(message);
 			onMessage?.();
 		},
 		async exec(_command: string, args: string[]) {
+			if (gen !== generation) throw new Error("stale extension ctx");
 			switch (args[0]) {
 				case "display-message": return { ...success, stdout: "%0\t@0\t$0\n" };
 				case "list-panes": return {
@@ -79,10 +85,7 @@ async function harness(t: TestContext) {
 					if (captureFails) return { ...success, code: 1, stderr: "capture failed" };
 					return { ...success, stdout: panes.get(args[2])!.content };
 				}
-				case "send-keys": {
-					if (args.includes("-l")) panes.get(args[args.indexOf("-t") + 1])!.shellCommand = args.at(-1);
-					return success;
-				}
+				case "send-keys": return success;
 				case "wait-for": {
 					if (args[1] === "-S") { waiting.get(args[2])?.(success); return success; }
 					return new Promise<typeof success>((resolve) => waiting.set(args[1], resolve));
@@ -90,9 +93,15 @@ async function harness(t: TestContext) {
 				default: throw new Error(`Unexpected tmux command: ${args}`);
 			}
 		},
-	};
-	extension(pi as unknown as ExtensionAPI);
-	await start();
+	});
+	/** Also simulates /reload: every earlier instance's api starts throwing. */
+	async function load() {
+		extension(makePi() as unknown as ExtensionAPI);
+		// Tests drive the fallback sweep explicitly.
+		clearInterval(g[Symbol.for("pi-tmux/state")].sweep);
+		await start();
+	}
+	await load();
 	const ctx = { sessionManager: { getSessionDir: () => sessionDir } } as unknown as ExtensionToolContext;
 	async function call(params: Record<string, unknown>) {
 		return tool.execute("test", params, new AbortController().signal, undefined, ctx);
@@ -114,7 +123,8 @@ async function harness(t: TestContext) {
 		waiting.get(channel)!(success);
 		await pending;
 	}
-	return { run, call, complete, messages, tool, sessionDir, failCapture(fail = true) { captureFails = fail; } };
+	const sweep = () => g[Symbol.for("pi-tmux/state")].sweepNow();
+	return { run, call, complete, load, sweep, messages, tool, sessionDir, failCapture(fail = true) { captureFails = fail; } };
 }
 
 test("every run closes after saving full snapshot and delivers only its path", { timeout: 5000 }, async (t) => {
@@ -212,7 +222,9 @@ test("runner reports failures and waits for background commands, including expli
 		const run = await h.run(command);
 		let stdout = "";
 		try {
-			({ stdout } = await exec("bash", ["-c", `tmux() { printf __completed__; }; export -f tmux\n${panes.get(run.paneId)!.shellCommand}`]));
+			const script = join(run.fullOutputPath, "..", "command.sh");
+			assert.match(panes.get(run.paneId)!.shellCommand!, /-ic .*command\.sh/);
+			({ stdout } = await exec("bash", ["-c", `tmux() { printf __completed__; }; export -f tmux\nbash ${JSON.stringify(script)}`]));
 		} catch (error) {
 			const failed = error as { code: number; stdout: string };
 			assert.equal(failed.code, expectedCode);
@@ -249,4 +261,46 @@ test("C-c still signals completion with exit 130", { timeout: 5000 }, async (t) 
 	assert.equal(await done, 130);
 	assert.equal(Number(await readFile(join(run.fullOutputPath, "..", "exit-code"), "utf8")), 130);
 	await h.complete(run.paneId, 130);
+});
+
+test("result is delivered through the new instance after /reload", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run("sleep 60");
+	await h.load();
+	await h.complete(run.paneId, 0);
+	assert.equal(h.messages.length, 1);
+	assert.equal(h.messages[0].details.fullOutputPath, run.fullOutputPath);
+	assert.equal((globalThis as any)[Symbol.for("pi-tmux/auto-exit-watchers")].size, 0);
+});
+
+test("sweep delivers a finished run whose wait-for signal was lost", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run();
+	await writeFile(join(run.fullOutputPath, "..", "exit-code"), "3\n");
+	h.sweep();
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.equal(h.messages.length, 1);
+	assert.equal(h.messages[0].details.exitCode, 3);
+	assert.ok(closed.includes(run.paneId));
+});
+
+test("sweep finalizes a pane closed outside the tool instead of keeping it pending", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run("sleep 60");
+	panes.delete(run.paneId);
+	h.sweep();
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.equal(h.messages.length, 1);
+	assert.match(h.messages[0].content, /closed outside the tool/);
+	assert.match(await readFile(run.fullOutputPath, "utf8"), /closed before its output/);
+	assert.equal((globalThis as any)[Symbol.for("pi-tmux/auto-exit-watchers")].size, 0);
+});
+
+test("runner accepts a command ending in a heredoc without a trailing newline", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run("cat <<'EOF'\nhello heredoc\nEOF");
+	const script = join(run.fullOutputPath, "..", "command.sh");
+	const { stdout } = await exec("bash", ["-c", `tmux() { :; }; export -f tmux\nbash ${JSON.stringify(script)}`]);
+	assert.equal(stdout, "hello heredoc\n");
+	await h.complete(run.paneId, 0);
 });

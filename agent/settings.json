@@ -41,5 +41,6 @@
     "+codemode"
   ],
   "deviceId": "930ad8ff-c58d-4a02-b7e8-20127ad05db6",
-  "packages": []
+  "packages": [],
+  "shellCommandPrefix": "umask 0022"
 }

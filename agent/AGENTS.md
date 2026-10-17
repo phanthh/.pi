@@ -10,7 +10,7 @@
 
 # External human/written communications (how you write when the readers are not me/the main user/humans):
 
-- Turn off caveman speech. Speak and write in standard English.
+- Turn off caveman speech. Speak and write in ASD-STE100 Simplified Technical English.
 - PRs etiquette:
     - Be upfront, to-the-point, specific and concise when writing PRs and commenting on PRs.
     - Respect the readers' time: appendices/extra information should be collapsed behind toggleable headers.

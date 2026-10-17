@@ -14,6 +14,7 @@
  * The tool is disabled when not running inside tmux, or when pi is running inside herdr.
  */
 
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -32,6 +33,29 @@ interface PaneInfo {
 	command: string;
 	pid: string;
 }
+
+interface PaneRun {
+	pane: string;
+	paneId: string;
+	command: string;
+	started: number;
+	fullOutputPath: string;
+	statusPath?: string;
+	scriptPath?: string;
+	result?: Promise<{ exitCode: number; elapsed: number; fullOutputPath: string }>;
+}
+
+interface SharedState {
+	api?: ExtensionAPI;
+	runs: Map<string, PaneRun>;
+	/** paneId → wait-for channel of an active completion watcher */
+	watchers: Map<string, string>;
+	sweep?: NodeJS.Timeout;
+	sweepNow?: () => void;
+}
+
+const STATE_KEY = Symbol.for("pi-tmux/state");
+const SWEEP_INTERVAL_MS = 2000;
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
@@ -74,21 +98,29 @@ export default function (pi: ExtensionAPI) {
 
 	let myPaneId: string | null = null;
 	let myWindowId: string | null = null;
-	// paneId → wait-for channel of an active completion watcher
-	const watchers = new Map<string, string>();
-	interface PaneRun {
-		pane: string;
-		paneId: string;
-		command: string;
-		started: number;
-		fullOutputPath: string;
-		statusPath?: string;
-		scriptPath?: string;
-		result?: Promise<{ exitCode: number; elapsed: number; fullOutputPath: string }>;
-	}
-	const runs = new Map<string, PaneRun>();
+	// Runs outlive this extension instance: after /reload or a session switch the old `pi`
+	// is stale (its exec/sendMessage throw), so pending runs always report via the latest one.
+	const g = globalThis as any;
+	const state: SharedState = (g[STATE_KEY] ??= { runs: new Map(), watchers: new Map() });
+	state.api = pi;
+	const api = () => state.api!;
+	const { runs, watchers } = state;
 	// tmux-subagents' child.ts holds auto-exit while any of these are pending.
-	(globalThis as any)[Symbol.for("pi-tmux/auto-exit-watchers")] = watchers;
+	g[Symbol.for("pi-tmux/auto-exit-watchers")] = watchers;
+
+	// Fallback when the wait-for signal is lost, or the pane is closed outside this tool:
+	// otherwise the result is never delivered and the pane counts as pending forever.
+	state.sweepNow = () => {
+		for (const run of runs.values()) {
+			if (run.result || !run.statusPath) continue;
+			const gone = !isPaneAlive(run.paneId);
+			if (!gone && !existsSync(run.statusPath)) continue;
+			void finishPane(run, gone ? "closed outside the tool" : "finished").catch(() => {});
+		}
+	};
+	clearInterval(state.sweep);
+	state.sweep = setInterval(state.sweepNow, SWEEP_INTERVAL_MS);
+	state.sweep.unref();
 
 	function finishPane(run: PaneRun, reason = "finished") {
 		if (run.result) return run.result;
@@ -103,11 +135,13 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			// Never close before the snapshot is safely on disk.
-			const output = await capturePane(run.paneId);
+			const alive = isPaneAlive(run.paneId);
+			const output = alive ? await capturePane(run.paneId) : "(pane was closed before its output could be captured)\n";
 			await writeFile(run.fullOutputPath, output, { mode: 0o600 });
-			if (isPaneAlive(run.paneId)) closeWorkerPane(run.paneId);
+			if (alive) closeWorkerPane(run.paneId);
 			const channel = watchers.get(run.paneId);
-			if (channel && reason !== "finished") await pi.exec("tmux", ["wait-for", "-S", channel]);
+			// Release a wait-for client the runner will never signal.
+			if (channel && reason !== "finished") await api().exec("tmux", ["wait-for", "-S", channel]);
 			for (const path of [run.scriptPath, run.statusPath]) {
 				if (path) await rm(path, { force: true }).catch(() => {});
 			}
@@ -119,7 +153,7 @@ export default function (pi: ExtensionAPI) {
 			// Delete right before steering: a subagent may auto-exit once this hits 0.
 			runs.delete(run.paneId);
 			watchers.delete(run.paneId);
-			pi.sendMessage(
+			api().sendMessage(
 				{
 					customType: "tmux_result",
 					content: `tmux pane '${run.pane}' ${reason}: '${run.command}' (exit ${exitCode}, ${result.elapsed}s). Pane closed.\nSnapshot: ${run.fullOutputPath}\nUse the read tool with this path to inspect pane content.`,
@@ -159,7 +193,7 @@ export default function (pi: ExtensionAPI) {
 	// Discover our own pane/window/session on startup
 	pi.on("session_start", async () => {
 		try {
-			const result = await pi.exec("tmux", [
+			const result = await api().exec("tmux", [
 				"display-message",
 				"-p",
 				"-t",
@@ -182,7 +216,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function findPane(name: string): Promise<PaneInfo | null> {
-		const result = await pi.exec("tmux", [
+		const result = await api().exec("tmux", [
 			"list-panes",
 			"-t",
 			requireWindowTarget(),
@@ -201,7 +235,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function listAllPanes(): Promise<PaneInfo[]> {
-		const result = await pi.exec("tmux", [
+		const result = await api().exec("tmux", [
 			"list-panes",
 			"-t",
 			requireWindowTarget(),
@@ -228,7 +262,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function capturePane(paneId: string, lines?: number): Promise<string> {
-		const result = await pi.exec("tmux", ["capture-pane", "-t", paneId, "-p", "-J", "-S", lines === undefined ? "-" : `-${lines}`]);
+		const result = await api().exec("tmux", ["capture-pane", "-t", paneId, "-p", "-J", "-S", lines === undefined ? "-" : `-${lines}`]);
 		if (result.code !== 0) throw new Error(`capture-pane failed: ${result.stderr}`);
 
 		let output = stripAnsi(result.stdout);
@@ -296,29 +330,19 @@ export default function (pi: ExtensionAPI) {
 					if (existing) await killPane(existing, ctx.sessionManager.getSessionDir());
 
 					const dir = await snapshotDirectory(ctx.sessionManager.getSessionDir());
-					let newPaneId: string;
-					try {
-						newPaneId = createWorkerPane({
-							title: pane,
-							tag: { key: "@pi_name", value: pane },
-							cwd,
-						});
-					} catch (error) {
-						await rm(dir, { recursive: true, force: true });
-						throw error;
-					}
-					const channel = `pi-tmux-${newPaneId.slice(1)}-${Date.now()}`;
+					const channel = `pi-tmux-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 					const run: PaneRun = {
-						pane, paneId: newPaneId, command, started: Date.now(),
+						pane, paneId: "", command, started: Date.now(),
 						fullOutputPath: join(dir, "output.txt"),
 						statusPath: join(dir, "exit-code"),
 						scriptPath: join(dir, "command.sh"),
 					};
-					runs.set(newPaneId, run);
 					// The outer EXIT trap also reports syntax errors, exit, exec and C-c.
 					// The command's subshell waits for background jobs before completion.
 					// Panes have a TTY, so pagers would block unattended runs.
-					const script = `export PAGER=cat GIT_PAGER=cat GH_PAGER=cat MANPAGER=cat SYSTEMD_PAGER= LESS=FRX
+					// umask 0022: files must stay readable by containers (bind-mounted init scripts).
+					const script = `umask 0022
+export PAGER=cat GIT_PAGER=cat GH_PAGER=cat MANPAGER=cat SYSTEMD_PAGER= LESS=FRX
 status_file=${shellQuote(run.statusPath!)}
 channel=${shellQuote(channel)}
 trap 'status=$?; printf "%s\\n" "$status" > "$status_file"; tmux wait-for -S "$channel"' EXIT
@@ -328,38 +352,44 @@ trap 'wait' EXIT
 ${command}
 )
 `;
+					await writeFile(run.scriptPath!, script, { mode: 0o600 });
+					// The pane runs the script as its own command (inside an interactive shell, for
+					// the user's rc env). Typing it into a fresh shell could be dropped while the shell
+					// starts, leaving an idle pane that looks like a running check.
+					const inner = `bash ${shellQuote(run.scriptPath!)}; exec "\${SHELL:-/bin/sh}"`;
+					let newPaneId: string;
 					try {
-						await writeFile(run.scriptPath!, script, { mode: 0o600 });
-						watchers.set(newPaneId, channel);
-						// Register before Enter so even immediately finishing commands are caught.
-						void pi.exec("tmux", ["wait-for", channel])
-							.then((result) => {
-								if (result.code !== 0) throw new Error(`wait-for failed: ${result.stderr}`);
-								return finishPane(run);
-							})
-							.catch((error) => {
-								watchers.delete(newPaneId);
-								pi.sendMessage(
-									{
-										customType: "tmux_result",
-										content: `tmux pane '${pane}' watcher error: ${String(error)}. Pane may still be open; inspect it with tmux read/list.`,
-										display: true,
-										details: { pane, command, exitCode: -1, elapsed: 0, error: String(error) },
-									},
-									{ triggerTurn: true, deliverAs: "steer" },
-								);
-							});
-						for (const args of [
-							["send-keys", "-l", "-t", newPaneId, `bash ${shellQuote(run.scriptPath!)}`],
-							["send-keys", "-t", newPaneId, "Enter"],
-						]) {
-							const result = await pi.exec("tmux", args);
-							if (result.code !== 0) throw new Error(`send-keys failed: ${result.stderr}`);
-						}
+						newPaneId = createWorkerPane({
+							title: pane,
+							tag: { key: "@pi_name", value: pane },
+							cwd,
+							command: `exec "\${SHELL:-/bin/sh}" -ic ${shellQuote(inner)}`,
+						});
 					} catch (error) {
-						await finishPane(run, "failed to start");
+						await rm(dir, { recursive: true, force: true });
 						throw error;
 					}
+					run.paneId = newPaneId;
+					runs.set(newPaneId, run);
+					watchers.set(newPaneId, channel);
+					// A runner that finished before this registers already set the channel; wait-for returns at once.
+					void api().exec("tmux", ["wait-for", channel])
+						.then((result) => {
+							if (result.code !== 0) throw new Error(`wait-for failed: ${result.stderr}`);
+							return finishPane(run);
+						})
+						.catch((error) => {
+							watchers.delete(newPaneId);
+							api().sendMessage(
+								{
+									customType: "tmux_result",
+									content: `tmux pane '${pane}' watcher error: ${String(error)}. Pane may still be open; inspect it with tmux read/list.`,
+									display: true,
+									details: { pane, command, exitCode: -1, elapsed: 0, error: String(error) },
+								},
+								{ triggerTurn: true, deliverAs: "steer" },
+							);
+						});
 
 					return {
 						content: [{
@@ -405,13 +435,13 @@ ${command}
 
 					// Send literal text first (if provided)
 					if (text) {
-						await pi.exec("tmux", ["send-keys", "-l", "-t", existing.paneId, text]);
+						await api().exec("tmux", ["send-keys", "-l", "-t", existing.paneId, text]);
 					}
 
 					// Then send special keys (if provided)
 					if (keys) {
 						const keyArgs = keys.split(/\s+/).filter(Boolean);
-						await pi.exec("tmux", ["send-keys", "-t", existing.paneId, ...keyArgs]);
+						await api().exec("tmux", ["send-keys", "-t", existing.paneId, ...keyArgs]);
 					}
 
 					const desc = [text && `"${text}"`, keys].filter(Boolean).join(" + ");

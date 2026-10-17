@@ -137,6 +137,8 @@ export interface CreateWorkerPaneOptions {
   title?: string;
   tag?: { key: string; value: string };
   cwd?: string;
+  /** Pane's initial shell-command (run by tmux's default-shell); default: interactive shell. */
+  command?: string;
 }
 
 /** Create in the next depth column, then normalize every column's geometry. */
@@ -151,6 +153,7 @@ export function createWorkerPane(options: CreateWorkerPaneOptions = {}): string 
       : ["split-window", "-d", "-h", "-f", "-t", self];
     if (options.cwd) args.push("-c", options.cwd);
     args.push("-P", "-F", "#{pane_id}");
+    if (options.command) args.push(options.command);
     const pane = tmux(args);
     if (!pane.startsWith("%")) throw new Error(`Unexpected tmux split-window output: ${pane}`);
     try {

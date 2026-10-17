@@ -11,7 +11,8 @@ import type { ServerDef } from "./servers.ts";
 
 const INIT_TIMEOUT_MS = 45_000;
 const REQUEST_TIMEOUT_MS = 30_000;
-const PUSH_WAIT_MS = 5_000;
+// Cold pyright on a big project can take >5s for the first push of a file.
+const PUSH_WAIT_MS = 15_000;
 const PUSH_DEBOUNCE_MS = 150;
 const IDLE_TIMEOUT_MS = 60_000;
 const IDLE_QUIET_MS = 300;
@@ -19,6 +20,8 @@ const IDLE_QUIET_MS = 300;
 export interface Client {
 	id: string;
 	root: string;
+	/** Caveat for every result from this server (see ServerDef.warning). */
+	warning?: string;
 	/** Sync file content from disk to server (didOpen / didChange). Returns true if server saw a change. */
 	open(file: string): boolean;
 	/** didClose + forget file (deleted/renamed away). */
@@ -27,7 +30,8 @@ export interface Client {
 	/** Resolves when server reports no in-progress work (indexing etc.), or after timeout. */
 	idle(): Promise<void>;
 	request<T>(method: string, params: unknown): Promise<T>;
-	diagnostics(file: string): Promise<Diagnostic[]>;
+	/** undefined = the server sent no report in time; NOT the same as "no diagnostics". */
+	diagnostics(file: string): Promise<Diagnostic[] | undefined>;
 	/** Write WorkspaceEdit to disk, resync touched files. Returns touched paths. */
 	applyEdit(edit: WorkspaceEdit): string[];
 	shutdown(): void;
@@ -172,14 +176,14 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 		return touched;
 	}
 
-	function waitForPush(file: string, since: number): Promise<Diagnostic[]> {
+	function waitForPush(file: string, since: number): Promise<Diagnostic[] | undefined> {
 		return new Promise((resolve) => {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const done = () => {
 				pushListeners.delete(listener);
 				clearTimeout(debounce);
 				clearTimeout(deadline);
-				resolve(pushed[file]?.items ?? []);
+				resolve(pushed[file]?.items);
 			};
 			const listener = (f: string) => {
 				if (f !== file || pushed[file].at < since) return;
@@ -215,6 +219,7 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 	return {
 		id: server.id,
 		root,
+		warning: server.warning,
 		open,
 		close,
 		idle,

@@ -612,9 +612,11 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   const identity = agentDefs?.body ?? params.systemPrompt ?? null;
   const identityInSystemPrompt = agentDefs?.systemPromptMode && identity;
   const roleBlock = identity && !identityInSystemPrompt ? `\n\n${identity}` : "";
+  // Models otherwise stamp research/reports with their training-era date.
+  const dateLine = `Current date: ${currentDate()}.`;
   const fullTask = behavior.inheritsConversationContext
-    ? params.task
-    : `${roleBlock}\n\n${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
+    ? `${dateLine}\n\n${params.task}`
+    : `${roleBlock}\n\n${dateLine}\n\n${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
 
   const parts: string[] = [
     "pi", "--session", shellEscape(childSessionFile),
@@ -698,6 +700,12 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   };
   runningSubagents.set(id, running);
   return running;
+}
+
+/** Local calendar date, e.g. "2026-10-17 (Saturday)". */
+export function currentDate(now = new Date()): string {
+  const day = now.toLocaleDateString("en-US", { weekday: "long" });
+  return `${now.toLocaleDateString("en-CA")} (${day})`;
 }
 
 export const AUTO_EXIT_HINT =

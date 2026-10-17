@@ -172,8 +172,14 @@ export default function (pi: ExtensionAPI) {
 			const run = <T>(method: string, reqParams: unknown) => Promise.all(clients.map((c) => c.request<T>(method, reqParams).catch(() => null)));
 
 			if (params.operation === "diagnostics") {
-				const items = (await Promise.all(clients.map((c) => c.diagnostics(file)))).flat();
-				return { content: [{ type: "text", text: formatDiagnostics(items, rel(file)) }], details: { count: items.length } };
+				const reports = await Promise.all(clients.map((c) => c.diagnostics(file)));
+				const items = reports.flatMap((r) => r ?? []);
+				const notes = clients.flatMap((c, i) => [
+					...(reports[i] === undefined ? [`${c.id}: no diagnostics report received in time (server may still be analyzing); this is NOT a clean result. Retry.`] : []),
+					...(c.warning ? [c.warning] : []),
+				]);
+				const text = [formatDiagnostics(items, rel(file)), ...notes.map((n) => `Note: ${n}`)].join("\n");
+				return { content: [{ type: "text", text }], details: { count: items.length } };
 			}
 
 			for (const c of clients) c.open(file);
@@ -252,7 +258,7 @@ export default function (pi: ExtensionAPI) {
 					case "codeAction": {
 						const client = clients[0];
 						// servers (tsserver) only offer quickfixes for diagnostics passed in context
-						const diags = (await client.diagnostics(file)).filter((d) => d.range.start.line <= position.line && d.range.end.line >= position.line);
+						const diags = ((await client.diagnostics(file)) ?? []).filter((d) => d.range.start.line <= position.line && d.range.end.line >= position.line);
 						const actions = (
 							(await client.request<(CodeAction | Command)[] | null>("textDocument/codeAction", {
 								textDocument,

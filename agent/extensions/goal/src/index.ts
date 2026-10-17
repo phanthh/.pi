@@ -37,6 +37,14 @@ Before goal(complete), audit the CURRENT repo state:
 5. Uncertainty = not achieved. Indirect evidence, partial coverage, or uninspected "looks right" → keep working.
 6. Budget exhaustion ≠ completion. Tight budget + unfinished work → leave the goal active and stop the turn.`;
 
+// Running subagents (tmux-subagents) + pending tmux panes (tmux): their results steer back and
+// trigger a turn, so nudging while they run only burns budget. Shared via Symbol.for, not imports.
+export function pendingChildren(): number {
+	const g = globalThis as any;
+	const size = (key: string) => (g[Symbol.for(key)] as Map<string, unknown> | undefined)?.size ?? 0;
+	return size("pi-tmux-subagents/running") + size("pi-tmux/auto-exit-watchers");
+}
+
 const overBudget = (g: GoalState) => g.budget !== undefined && g.tokensUsed >= g.budget;
 
 const escapeXml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -132,6 +140,7 @@ ${VERIFY_CHECKLIST}`,
 		}
 		if (!runHadTools) return; // talk-only run = stalled/asking → wait for user
 		if (overBudget(goal)) return; // budget hit → stop the loop, user decides next
+		if (pendingChildren() > 0) return; // their completion wakes the agent
 		goal.nudges++;
 		persist(ctx);
 		pi.sendMessage(

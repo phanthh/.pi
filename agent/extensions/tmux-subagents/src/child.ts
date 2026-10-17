@@ -228,7 +228,8 @@ export default function (pi: ExtensionAPI) {
     description:
       "Ask the parent agent for help or a decision. This session stays alive: after calling, end your turn; " +
       "the parent's reply arrives as your next message and you continue the task. " +
-      "Use only when blocked and the parent must act or decide. Not for progress updates or FYIs.",
+      "Use only when blocked and the parent must act or decide. Not for progress updates or FYIs. " +
+      "Never ping to say you are waiting on your own tmux panes/subagents: just end your turn; you stay alive and their results wake you.",
     parameters: Type.Object({
       message: Type.String({ description: "What you need help with" }),
     }),
