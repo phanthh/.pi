@@ -72,10 +72,13 @@ export function sendEscape(surface: string): void {
 /**
  * Paste text into a pane and submit it (used to talk to a live child pi session).
  * Buffer arrives over stdin so the tmux server never needs to see a file path.
+ * -p wraps the paste in bracketed-paste markers (pi enables mode 2004), so
+ * embedded newlines stay in the editor instead of acting as Enter and
+ * submitting only the first line.
  */
 export function sendText(surface: string, text: string): void {
   execFileSync("tmux", ["load-buffer", "-b", "pi-subagent", "-"], { input: text, encoding: "utf8" });
-  tmux(["paste-buffer", "-d", "-b", "pi-subagent", "-t", surface]);
+  tmux(["paste-buffer", "-p", "-d", "-b", "pi-subagent", "-t", surface]);
   tmux(["send-keys", "-t", surface, "Enter"]);
 }
 
