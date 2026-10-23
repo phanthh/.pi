@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.3.0",
+  "lastChangelogVersion": "1.4.0",
   "theme": "tokyonight",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -23,12 +23,13 @@
   "compaction": {
     "enabled": true,
     "overrideMaxTokens": 250000,
+    "idleCompact": false,
     "reserveTokens": 50000
   },
   "branchSummary": {
     "skipPrompt": true
   },
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "showCacheMissNotices": true,
   "enabledModels": [
     "anthropic/claude-opus-5-5",

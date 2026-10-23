@@ -48,10 +48,38 @@ export const hasEnoughToCompact = (branch: readonly BranchEntry[], keepRecentTok
 const keepRecentTokens = (ctx: ExtensionContext): number =>
   SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() }).getCompactionKeepRecentTokens(ctx.model);
 
+/** Env override for `compaction.idleCompact`; wins over settings.json. */
+export const IDLE_COMPACT_ENV = "PI_IDLE_COMPACT";
+
+const parseFlag = (value: string | undefined): boolean | undefined => {
+  const v = value?.trim().toLowerCase();
+  if (v === "1" || v === "true" || v === "on" || v === "yes") return true;
+  if (v === "0" || v === "false" || v === "off" || v === "no") return false;
+  return undefined;
+};
+
+const idleCompactSetting = (settings: unknown): boolean | undefined => {
+  const compaction = (settings as { compaction?: unknown } | undefined)?.compaction;
+  const value = compaction && typeof compaction === "object" ? (compaction as Record<string, unknown>).idleCompact : undefined;
+  return typeof value === "boolean" ? value : undefined;
+};
+
+/** Env `PI_IDLE_COMPACT` → trusted project `compaction.idleCompact` → global → default off. */
+export const idleCompactEnabled = (ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">, env = process.env): boolean => {
+  const fromEnv = parseFlag(env[IDLE_COMPACT_ENV]);
+  if (fromEnv !== undefined) return fromEnv;
+  const projectTrusted = ctx.isProjectTrusted();
+  const settings = SettingsManager.create(ctx.cwd, undefined, { projectTrusted });
+  return (projectTrusted ? idleCompactSetting(settings.getProjectSettings()) : undefined)
+    ?? idleCompactSetting(settings.getGlobalSettings())
+    ?? false;
+};
+
 export const registerIdleCompact = (
   pi: ExtensionAPI,
-  { now = Date.now, keepTokens = keepRecentTokens, liveEnabled = () => false }: {
+  { now = Date.now, keepTokens = keepRecentTokens, liveEnabled = () => false, enabled = idleCompactEnabled }: {
     now?: () => number;
+    enabled?: (ctx: ExtensionContext) => boolean;
     keepTokens?: (ctx: ExtensionContext) => number;
     liveEnabled?: (ctx: ExtensionContext) => boolean;
   } = {},
@@ -62,7 +90,7 @@ export const registerIdleCompact = (
     const last = lastCacheTouchMs(branch);
     if (last === undefined) return;
     const idleMs = now() - last;
-    if (idleMs < IDLE_COMPACT_AFTER_MS) return;
+    if (idleMs < IDLE_COMPACT_AFTER_MS || !enabled(ctx)) return;
     try {
       if (!hasEnoughToCompact(branch, keepTokens(ctx), liveEnabled(ctx))) return;
     } catch (cause) {

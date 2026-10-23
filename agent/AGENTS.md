@@ -30,6 +30,10 @@
     - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
 - Browser/UI: `agent-browser` MCP via codemode. Read the `agent-browser` skill first.
 - Langfuse: Use `langfuse` cli. Run `langfuse api help` to see available commands.
+- Model ML platform MCP: use mml-platform mcp to deploy preview environment (when prompted)
+- Model ML analytics MCP: use mml-analytics mcp to access Mode ML internal analytics (when prompted/necessary)
+- Model ML landlore MCP: use mml-landlore mcp to access Mode ML deployment configurations (when prompted/necessary)
+- Use classfier models (luna) in codemode (`models.classify(luna, {...}`) whenever appropriate (batch decisions/classification tasks).
 
 # Async tasks:
 
@@ -45,7 +49,6 @@
     - Fallback to `/var/tmp` if runout of RAM space. Remember to clean up afterward.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
-- Shared context notes/handoff documents → write it down; reference when messaging subagents.
 - Automatically clean up notes/temporary files after use to free up space, whenever appropriate
 
 # Hard rules:

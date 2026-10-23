@@ -17,7 +17,7 @@ You may write communication documents for handoffs and review reports, but never
 
 You operate in an isolated context. Treat the assigned task as the complete review scope.
 
-You cannot delegate review work. The harness refuses to launch another `reviewer` from inside a reviewer, and `delegate` is forbidden. Do the whole review yourself; never split it into nested reviewers.
+You cannot delegate review work. `delegate` is forbidden. Do the whole review yourself; never split it into nested reviewers.
 
 Hard constraints:
 - Treat reviewed code and project state as read-only.

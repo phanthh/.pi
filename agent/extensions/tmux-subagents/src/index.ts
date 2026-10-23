@@ -16,6 +16,16 @@ import { fileURLToPath } from "node:url";
 import { Type, type Static } from "typebox";
 import { workerDepth } from "@pi-ext/tmux-layout";
 import {
+  allowedSpawns,
+  csv,
+  type LaunchSpec,
+  readLaunchSpec,
+  resolveDenyTools,
+  resolveToolAllowlist,
+  spawnRefusal,
+  writeLaunchSpec,
+} from "./policy.ts";
+import {
   getSubagentActivityFile,
   readSubagentActivityFile,
   type ActivityReadResult,
@@ -95,6 +105,7 @@ interface AgentDefaults {
   skills?: string;
   denyTools?: string;
   spawning?: boolean;
+  spawns?: string;
   autoExit?: boolean;
   interactive?: boolean;
   systemPromptMode?: "append" | "replace";
@@ -151,6 +162,7 @@ function parseAgentDefinition(content: string, fallbackName: string): AgentDefin
     skills: frontmatterValue(fm, "skills") ?? frontmatterValue(fm, "skill"),
     denyTools: frontmatterValue(fm, "deny-tools"),
     spawning: parseBool(frontmatterValue(fm, "spawning")),
+    spawns: frontmatterValue(fm, "spawns"),
     autoExit: parseBool(frontmatterValue(fm, "auto-exit")),
     interactive: parseBool(frontmatterValue(fm, "interactive")),
     systemPromptMode: promptMode === "replace" ? "replace" : promptMode === "append" ? "append" : undefined,
@@ -184,20 +196,8 @@ function loadAgentDefaults(agentName: string): AgentDefinition | null {
   return discoverAgentDefinitions().find((agent) => agent.name === agentName) ?? null;
 }
 
-/** Tools gated by `spawning: false`. */
-const SPAWNING_TOOLS = new Set(["tmux_subagent"]);
 // Keep codemode available without widening the child's tool allowlist.
 const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done", "codemode"] as const;
-
-function resolveDenyTools(agentDefs: AgentDefaults | null): Set<string> {
-  const denied = new Set<string>();
-  if (!agentDefs) return denied;
-  if (agentDefs.spawning === false) for (const tool of SPAWNING_TOOLS) denied.add(tool);
-  for (const tool of (agentDefs.denyTools ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
-    denied.add(tool);
-  }
-  return denied;
-}
 
 /** Child `--tools` allowlist always keeps the control tools and codemode reachable. */
 export function buildChildToolAllowlist(effectiveTools?: string): string | null {
@@ -552,6 +552,56 @@ interface LaunchContext {
   inheritedThinking?: string;
 }
 
+/** Shell command that starts (or resumes) a child pi from a launch spec. Shared by launch and resume. */
+function buildChildCommand(o: {
+  spec: LaunchSpec;
+  sessionFile: string;
+  id: string;
+  surface: string;
+  activityFile: string;
+  artifactDir: string;
+  promptArgs: string[];
+}): string {
+  const { spec } = o;
+  const parts: string[] = [
+    "pi", "--session", shellEscape(o.sessionFile),
+    "-e", shellEscape(CHILD_EXTENSION), "-e", "builtin:codemode",
+  ];
+  if (spec.model) parts.push("--model", shellEscape(spec.model));
+
+  // Multiline system prompts go through a file; pi reads path arguments.
+  if (spec.systemPrompt) {
+    const flag = spec.systemPrompt.mode === "replace" ? "--system-prompt" : "--append-system-prompt";
+    const syspromptPath = join(o.artifactDir, "context", `${slug(spec.name)}-sysprompt-${o.id}.md`);
+    mkdirSync(dirname(syspromptPath), { recursive: true });
+    writeFileSync(syspromptPath, spec.systemPrompt.text, "utf8");
+    parts.push(flag, shellEscape(syspromptPath));
+  }
+  if (spec.tools) parts.push("--tools", shellEscape(spec.tools));
+  if (spec.denyTools.length > 0) parts.push("--exclude-tools", shellEscape(spec.denyTools.join(",")));
+  for (const arg of o.promptArgs) parts.push(shellEscape(arg));
+
+  const env: string[] = [];
+  if (spec.agentDir) env.push(`PI_CODING_AGENT_DIR=${shellEscape(spec.agentDir)}`);
+  if (spec.denyTools.length > 0) env.push(`PI_DENY_TOOLS=${shellEscape(spec.denyTools.join(","))}`);
+  if (spec.spawns) env.push(`PI_SUBAGENT_SPAWNS=${shellEscape(spec.spawns.join(","))}`);
+  env.push(`PI_SUBAGENT_NAME=${shellEscape(spec.name)}`);
+  if (spec.agent) env.push(`PI_SUBAGENT_AGENT=${shellEscape(spec.agent)}`);
+  if (spec.autoExit) env.push("PI_SUBAGENT_AUTO_EXIT=1");
+  env.push(`PI_SUBAGENT_SESSION=${shellEscape(o.sessionFile)}`);
+  env.push(`PI_SUBAGENT_ID=${shellEscape(o.id)}`);
+  env.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(o.activityFile)}`);
+  env.push(`PI_SUBAGENT_SURFACE=${shellEscape(o.surface)}`);
+  env.push(`PI_SUBAGENT_DEPTH=${workerDepth()}`);
+
+  const cdPrefix = spec.cwd ? `cd ${shellEscape(spec.cwd)} && ` : "";
+  return `${cdPrefix}${env.join(" ")} ${parts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
+}
+
+function agentDirEnv(localAgentDir: string | null): string | undefined {
+  return localAgentDir && existsSync(localAgentDir) ? localAgentDir : process.env.PI_CODING_AGENT_DIR;
+}
+
 async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise<RunningSubagent> {
   const startTime = Date.now();
   const id = Math.random().toString(16).slice(2, 10);
@@ -563,7 +613,7 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   const pinnedModel = agentDefs?.model;
   const effectiveModel = pinnedModel ?? ctx.inheritedModel;
   const effectiveThinking = agentDefs?.thinking ?? (pinnedModel ? undefined : ctx.inheritedThinking);
-  const effectiveTools = params.tools ?? agentDefs?.tools;
+  const effectiveTools = resolveToolAllowlist(agentDefs?.tools, params.tools);
   const effectiveSkills = params.skills ?? agentDefs?.skills;
   const interactive = resolveEffectiveInteractive(params, agentDefs);
 
@@ -618,44 +668,23 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
     ? `${dateLine}\n\n${params.task}`
     : `${roleBlock}\n\n${dateLine}\n\n${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
 
-  const parts: string[] = [
-    "pi", "--session", shellEscape(childSessionFile),
-    "-e", shellEscape(CHILD_EXTENSION), "-e", "builtin:codemode",
-  ];
-
-  if (effectiveModel) {
-    parts.push("--model", shellEscape(effectiveThinking ? `${effectiveModel}:${effectiveThinking}` : effectiveModel));
-  }
-
-  // Multiline system prompts go through a file; pi reads path arguments.
-  if (identityInSystemPrompt && identity) {
-    const flag = agentDefs?.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt";
-    const syspromptPath = join(artifactDir, "context", `${slug(params.name)}-sysprompt-${id}.md`);
-    mkdirSync(dirname(syspromptPath), { recursive: true });
-    writeFileSync(syspromptPath, identity, "utf8");
-    parts.push(flag, shellEscape(syspromptPath));
-  }
-
-  const toolAllowlist = buildChildToolAllowlist(effectiveTools);
-  if (toolAllowlist) parts.push("--tools", shellEscape(toolAllowlist));
-  const denySet = resolveDenyTools(agentDefs);
-  if (denySet.size > 0) parts.push("--exclude-tools", shellEscape([...denySet].join(",")));
-
-  const envParts: string[] = [];
-  if (localAgentDir && existsSync(localAgentDir)) {
-    envParts.push(`PI_CODING_AGENT_DIR=${shellEscape(localAgentDir)}`);
-  } else if (process.env.PI_CODING_AGENT_DIR) {
-    envParts.push(`PI_CODING_AGENT_DIR=${shellEscape(process.env.PI_CODING_AGENT_DIR)}`);
-  }
-  if (denySet.size > 0) envParts.push(`PI_DENY_TOOLS=${shellEscape([...denySet].join(","))}`);
-  envParts.push(`PI_SUBAGENT_NAME=${shellEscape(params.name)}`);
-  if (params.agent) envParts.push(`PI_SUBAGENT_AGENT=${shellEscape(params.agent)}`);
-  if (agentDefs?.autoExit) envParts.push("PI_SUBAGENT_AUTO_EXIT=1");
-  envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(childSessionFile)}`);
-  envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
-  envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
-  envParts.push(`PI_SUBAGENT_SURFACE=${shellEscape(surface)}`);
-  envParts.push(`PI_SUBAGENT_DEPTH=${workerDepth()}`);
+  const spec: LaunchSpec = {
+    version: 1,
+    name: params.name,
+    agent: params.agent,
+    model: effectiveModel && (effectiveThinking ? `${effectiveModel}:${effectiveThinking}` : effectiveModel),
+    systemPrompt:
+      identityInSystemPrompt && identity
+        ? { mode: agentDefs?.systemPromptMode === "replace" ? "replace" : "append", text: identity }
+        : undefined,
+    tools: buildChildToolAllowlist(effectiveTools) ?? undefined,
+    denyTools: resolveDenyTools(agentDefs),
+    spawns: agentDefs?.spawns !== undefined ? csv(agentDefs.spawns) : undefined,
+    autoExit: agentDefs?.autoExit ?? false,
+    cwd: targetCwd,
+    agentDir: agentDirEnv(localAgentDir),
+  };
+  writeLaunchSpec(childSessionFile, spec);
 
   let taskArg: string;
   if (behavior.taskDelivery === "direct") {
@@ -666,12 +695,15 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
     writeFileSync(artifactPath, fullTask, "utf8");
     taskArg = `@${artifactPath}`;
   }
-  for (const promptArg of buildPiPromptArgs({ effectiveSkills, taskDelivery: behavior.taskDelivery, taskArg })) {
-    parts.push(shellEscape(promptArg));
-  }
-
-  const cdPrefix = effectiveCwd ? `cd ${shellEscape(effectiveCwd)} && ` : "";
-  const command = `${cdPrefix}${envParts.join(" ")} ${parts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
+  const command = buildChildCommand({
+    spec,
+    sessionFile: childSessionFile,
+    id,
+    surface,
+    activityFile,
+    artifactDir,
+    promptArgs: buildPiPromptArgs({ effectiveSkills, taskDelivery: behavior.taskDelivery, taskArg }),
+  });
   const launchScriptFile = join(artifactDir, "subagent-scripts", `${slug(params.name)}-${id}.sh`);
 
   sendLongCommand(surface, command, {
@@ -1019,7 +1051,10 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       const action = params.action ?? "launch";
 
       if (action === "list") {
-        const list = discoverAgentDefinitions().filter((agent) => !agent.hidden);
+        const spawnable = allowedSpawns();
+        const list = discoverAgentDefinitions().filter(
+          (agent) => !agent.hidden && (!spawnable || spawnable.has(agent.name)),
+        );
         if (list.length === 0) return reply("No agent definitions found.", { agents: [] });
         const lines = list.map((a) => {
           const badge = a.source === "bundled" ? "" : ` (${a.source})`;
@@ -1127,25 +1162,26 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         inheritedThinking: ctx.thinkingLevel,
       };
 
-      // Launch and resume both spawn into the next column and obey the same cap.
-      const depth = workerDepth() - 1;
-      const maxDepth = Number.parseInt(process.env.PI_SUBAGENT_MAX_DEPTH ?? "2", 10) || 2;
-      if (depth >= maxDepth) {
-        return reply(
-          `Subagent depth limit reached (${depth}/${maxDepth}). Do this work yourself.`,
-          { error: "depth limit" },
-          true,
-        );
-      }
-
       if (action === "resume") {
         if (!params.sessionPath) return reply("Missing sessionPath for resume.", { error: "missing sessionPath" }, true);
         if (!existsSync(params.sessionPath)) {
           return reply(`Session file not found: ${params.sessionPath}`, { error: "session not found" }, true);
         }
 
-        const name = params.name ?? "Resume";
-        const autoExit = params.autoExit ?? true;
+        // Re-apply the role the session was launched with; sessions without a spec resume as role-less.
+        const saved = readLaunchSpec(params.sessionPath);
+        const refusal = spawnRefusal(saved?.agent, allowedSpawns());
+        if (refusal) return reply(refusal, { error: "spawn not allowed" }, true);
+        const name = params.name ?? saved?.name ?? "Resume";
+        const autoExit = params.autoExit ?? saved?.autoExit ?? true;
+        const spec: LaunchSpec = {
+          ...(saved ?? { version: 1, denyTools: [], agentDir: process.env.PI_CODING_AGENT_DIR }),
+          name,
+          autoExit,
+          // Resumer's own denies still apply: resume must not escape them.
+          denyTools: resolveDenyTools({ denyTools: (saved?.denyTools ?? []).join(",") }),
+        };
+        writeLaunchSpec(params.sessionPath, spec);
         const id = Math.random().toString(16).slice(2, 10);
         const startTime = Date.now();
         const artifactDir = artifactDirFor(
@@ -1158,30 +1194,25 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         const surface = createSurface(name);
         await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
 
-        const parts = [
-          "pi", "--session", shellEscape(params.sessionPath),
-          "-e", shellEscape(CHILD_EXTENSION), "-e", "builtin:codemode",
-        ];
+        const promptArgs: string[] = [];
         if (params.message) {
           const messageFile = join(artifactDir, "subagent-resume", `${slug(name, "resume")}-${id}.md`);
           mkdirSync(dirname(messageFile), { recursive: true });
           writeFileSync(messageFile, params.message, "utf8");
-          parts.push(shellEscape(`@${messageFile}`));
+          promptArgs.push(`@${messageFile}`);
         }
-
-        const envParts: string[] = [];
-        if (process.env.PI_CODING_AGENT_DIR) {
-          envParts.push(`PI_CODING_AGENT_DIR=${shellEscape(process.env.PI_CODING_AGENT_DIR)}`);
-        }
-        envParts.push(`PI_SUBAGENT_NAME=${shellEscape(name)}`);
-        envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath)}`);
-        envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
-        envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
-        envParts.push(`PI_SUBAGENT_DEPTH=${workerDepth()}`);
-        if (autoExit) envParts.push("PI_SUBAGENT_AUTO_EXIT=1");
+        const command = buildChildCommand({
+          spec,
+          sessionFile: params.sessionPath,
+          id,
+          surface,
+          activityFile,
+          artifactDir,
+          promptArgs,
+        });
 
         const launchScriptFile = join(artifactDir, "subagent-scripts", `${slug(name, "resume")}-resume-${id}.sh`);
-        sendLongCommand(surface, `${envParts.join(" ")} ${parts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`, {
+        sendLongCommand(surface, command, {
           scriptPath: launchScriptFile,
           scriptPreamble: [
             `# Subagent resume script for ${name}`,
@@ -1195,6 +1226,8 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           id,
           name,
           task: params.message ?? "resumed session",
+          agent: spec.agent,
+          model: spec.model,
           surface,
           startTime,
           sessionFile: params.sessionPath,
@@ -1224,14 +1257,8 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         );
       }
 
-      const currentAgent = process.env.PI_SUBAGENT_AGENT;
-      if (params.agent && currentAgent && params.agent === currentAgent) {
-        return reply(
-          `You are the ${currentAgent} agent — do not start another ${currentAgent}. Do the work yourself.`,
-          { error: "self-spawn blocked" },
-          true,
-        );
-      }
+      const refusal = spawnRefusal(params.agent, allowedSpawns());
+      if (refusal) return reply(refusal, { error: "spawn not allowed" }, true);
 
       let running: RunningSubagent;
       try {

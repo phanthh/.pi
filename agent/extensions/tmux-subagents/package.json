@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test": "node --test src/child.test.ts"
+		"test": "node --test src/child.test.ts src/policy.test.ts"
 	},
 	"pi": {
 		"extensions": ["./src/index.ts"]

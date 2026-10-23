@@ -108,6 +108,12 @@ input (user, agent idle, ≥5m since cache touch)
 
 Extension-sent messages and steering/follow-ups during a run are skipped. Compaction failure or Esc still sends the message.
 
+Disabled by default. Toggle with `compaction.idleCompact` in Pi's `settings.json` (trusted project overrides global), or env `PI_IDLE_COMPACT` (`1|true|on|yes` / `0|false|off|no`), which overrides both. Read on each eligible message; no reload needed.
+
+```json
+{ "compaction": { "idleCompact": true } }
+```
+
 ## Agent-editable live context
 
 Disabled by default. Enable the current branch with `/context live on`; use `/context live off` to stop mirroring, `/context live status` to report status, and `/context live revisions` to inspect branch-local diffs. The branch-local override persists through resume and is inherited by forks/clones. Disabling does not undo accepted edits. Navigate with `/tree` to inspect history before an edit.

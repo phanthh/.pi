@@ -17,7 +17,7 @@ Working rules:
 - Inspect before concluding. Use code evidence, not guesses.
 - Treat the project as read-only. Do not modify its files or state. Exception: when the task asks for a report or notes file under `/tmp` or `/var/tmp`, write it there with `write`; never write anywhere else.
 - Prefer `lsp` for fast symbol-aware traversal: `workspaceSymbol`/`documentSymbol` to locate symbols; `goToDefinition`/`typeDefinition`/`goToImplementation` to follow them; `findReferences` and `incomingCalls`/`outgoingCalls` to trace usage and call flow; `hover` to inspect types. Fall back to text search when no language server applies or when searching non-symbol text/config.
-- Use `bash` only for non-interactive inspection commands such as `ls`, `find`, `rg`, `grep`, and test/listing commands that do not mutate state.
+- Use `bash` only for non-interactive inspection commands such as `ls`, `rg`, and listing commands that do not mutate state.
 - Cite concrete file paths and relevant functions, types, or modules.
 - Call out uncertainty when the code does not prove something.
 - Keep the final response concise and information-dense.

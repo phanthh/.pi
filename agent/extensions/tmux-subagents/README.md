@@ -43,8 +43,8 @@ worker column shares the window with that region; closing the final worker
 returns the full window to it.
 
 Live pane depth determines the next column, with `PI_SUBAGENT_DEPTH` as a
-fallback. Launches and resumes both propagate this depth and obey the same
-nesting cap. Layout changes are serialized across pi processes in one window.
+fallback. Launches and resumes both propagate this depth (layout only; there
+is no nesting cap). Layout changes are serialized across pi processes in one window.
 
 Nested delegation: an auto-exit child does not exit while it still has running
 subagents or pending tmux panes (exiting would kill them). Every tmux command
@@ -62,7 +62,7 @@ Results steer back, trigger a turn, and the child exits after that turn.
 | `{ action: "send", id, message }` | Deliver a follow-up prompt to a live child |
 | `{ action: "interrupt", id }` | Escape the child's current turn; session stays alive |
 | `{ action: "stop", id }` | Kill the child pane, return its last output |
-| `{ action: "resume", sessionPath, message? }` | Restart a previous child session |
+| `{ action: "resume", sessionPath, message? }` | Restart a previous child session with its original role |
 
 Launch parameters: `name`, `task`, `agent`, `tools`, `skills`,
 `systemPrompt`, `cwd`, `fork`, `interactive`. No model override: the child
@@ -111,20 +111,30 @@ Precedence: `.pi/agents/` (project) > `~/.pi/agent/agents/` (global) > bundled.
 Frontmatter: `name`, `description`, `model`, `thinking`, `tools`, `skills`,
 `system-prompt` (`append`/`replace`), `session-mode`
 (`standalone`/`lineage-only`/`fork`), `auto-exit`, `interactive`, `spawning`,
-`deny-tools`, `cwd`, `disable-model-invocation`.
+`spawns`, `deny-tools`, `cwd`, `disable-model-invocation`.
 
 `deny-tools` (plus `tmux_subagent` when `spawning: false`) is passed as
 `--exclude-tools` and `PI_DENY_TOOLS`, so the child cannot call those tools.
 Use it instead of `tools` when a role must keep MCP tools: allowlists match
-exact names only, so MCP tools are unreachable unless listed one by one. Independently, launches are capped at `PI_SUBAGENT_MAX_DEPTH`
-(default 2).
+exact names only, so MCP tools are unreachable unless listed one by one.
+
+Policy (`policy.ts`), enforced at any depth:
+
+- Denies accumulate: child denies = its role's denies ∪ the launcher's `PI_DENY_TOOLS`.
+  A descendant never regains a tool an ancestor lost.
+- A launch `tools` override only narrows a role's `tools` allowlist; it never widens it.
+- `spawns: a, b` limits which agents the role may launch or resume (`PI_SUBAGENT_SPAWNS`).
+  Omitted = unrestricted. Agent-less launches are refused under a `spawns` list.
+- Each launch writes `<session>.launch.json` (agent, model, system prompt, tools,
+  denies, spawns, auto-exit, cwd). Resume rebuilds the child from it and merges the
+  resumer's denies. Sessions without the file resume role-less, still under those denies.
+- No depth cap and no same-role block: a delegate may start delegates.
 
 ## Env
 
 | Var | Meaning |
 | --- | --- |
 | `PI_SUBAGENT_SHELL_READY_DELAY_MS` | Wait before sending the launch command (default 500) |
-| `PI_SUBAGENT_MAX_DEPTH` | Max nesting depth (default 2) |
 | `PI_CODING_AGENT_DIR` | Propagated to children; `cwd/.pi/agent` wins when present |
 
 ## Files
@@ -136,6 +146,7 @@ tmux.ts      pane primitives + exit polling
 activity.ts  child activity snapshot (write/read/validate)
 status.ts    snapshot → status kind, transitions, status lines
 session.ts   child session seeding, summary extraction
+policy.ts    deny inheritance, tools narrowing, spawns gate, launch spec sidecar
 agents/      scout, delegate, researcher, reviewer
 ```
 

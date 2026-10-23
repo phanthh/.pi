@@ -13,7 +13,7 @@ import { effectiveMaxTokens } from "./compact/max-tokens.ts";
 import { applyConfig, DEFAULT_CONFIG } from "./config.ts";
 import { maxDropCountForPool, runDropper, selectDropCandidates } from "./dropper.ts";
 import { estimateTokens, hashId, MEMORY_END, MEMORY_START, OM_OBSERVATIONS_DROPPED, OM_OBSERVATIONS_RECORDED, OM_REFLECTIONS_RECORDED, type Observation, projectMemory, renderMemoryBlock, stripMemoryBlock, type Reflection } from "./memory.ts";
-import { IDLE_COMPACT_AFTER_MS, lastCacheTouchMs, registerIdleCompact } from "./idle-compact.ts";
+import { IDLE_COMPACT_AFTER_MS, IDLE_COMPACT_ENV, idleCompactEnabled, lastCacheTouchMs, registerIdleCompact } from "./idle-compact.ts";
 import { registerOm } from "./om.ts";
 import { MAX_CONTENT_CHARS, parseDropIds, parseObservations, parseReflections } from "./parse.ts";
 import { sectionBudgets, selectWithinBudget } from "./prompt-budget.ts";
@@ -485,9 +485,11 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
   let handler: any;
   let clock = 0;
   let keepTokens = 1;
+  let enabled = true;
   registerIdleCompact({ on: (_name: string, h: unknown) => { handler = h; } } as any, {
     now: () => clock,
     keepTokens: () => keepTokens,
+    enabled: () => enabled,
   });
   const run = async (entries: any[], source = "interactive") => {
     let compacted = 0;
@@ -503,6 +505,12 @@ assert.equal(applyConfig(DEFAULT_CONFIG, { reflectorInputMaxTokens: 1 }).reflect
   assert.equal(await run(branch), 0, "warm cache: no compaction");
   clock = 3_000 + IDLE_COMPACT_AFTER_MS;
   assert.equal(await run(branch), 1, "expired cache: compact before message");
+  enabled = false;
+  assert.equal(await run(branch), 0, "disabled: no compaction");
+  enabled = true;
+  const untrusted = { cwd: "/nonexistent", isProjectTrusted: () => false };
+  assert.equal(idleCompactEnabled(untrusted, { [IDLE_COMPACT_ENV]: "0" }), false, "env off wins");
+  assert.equal(idleCompactEnabled(untrusted, { [IDLE_COMPACT_ENV]: "on" }), true, "env on wins");
   assert.equal(await run(branch, "extension"), 0, "extension-sent messages skip");
   assert.equal(await run(branch.slice(0, 2)), 0, "too few messages skips");
   keepTokens = 10_000;
