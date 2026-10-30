@@ -1,7 +1,5 @@
-/** Child session file seeding + result extraction. */
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+/** Child session result extraction. */
+import { readFileSync } from "node:fs";
 
 export interface SessionEntry {
   type: string;
@@ -18,54 +16,6 @@ export interface MessageEntry extends SessionEntry {
   };
 }
 
-export type SeededSubagentSessionMode = "lineage-only" | "fork";
-
-/** Parent turns up to (excluding) the last user message — the fork context. */
-function getForkContentLines(parentSessionFile: string): string[] {
-  const lines = readFileSync(parentSessionFile, "utf8")
-    .split("\n")
-    .filter((line) => line.trim());
-
-  let truncateAt = lines.length;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const entry = JSON.parse(lines[i]);
-      if (entry.type === "message" && entry.message?.role === "user") {
-        truncateAt = i;
-        break;
-      }
-    } catch {}
-  }
-
-  return lines.slice(0, truncateAt).filter((line) => {
-    try {
-      return JSON.parse(line).type !== "session";
-    } catch {
-      return true;
-    }
-  });
-}
-
-export function seedSubagentSessionFile(params: {
-  mode: SeededSubagentSessionMode;
-  parentSessionFile: string;
-  childSessionFile: string;
-  childCwd: string;
-}): void {
-  const header = {
-    type: "session",
-    version: 3,
-    id: randomUUID(),
-    timestamp: new Date().toISOString(),
-    cwd: params.childCwd,
-    parentSession: params.parentSessionFile,
-  };
-  const contentLines = params.mode === "fork" ? getForkContentLines(params.parentSessionFile) : [];
-  mkdirSync(dirname(params.childSessionFile), { recursive: true });
-  writeFileSync(params.childSessionFile, [JSON.stringify(header), ...contentLines].join("\n") + "\n", "utf8");
-}
-
-/** Entries after `afterLine` (count of already-seen entries). */
 export function getNewEntries(sessionFile: string, afterLine: number): SessionEntry[] {
   return readFileSync(sessionFile, "utf8")
     .split("\n")

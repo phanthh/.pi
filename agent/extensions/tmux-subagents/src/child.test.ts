@@ -60,12 +60,12 @@ test("child startup restores codemode without widening other role permissions", 
   }
 });
 
-test("caller_ping keeps an auto-exit child alive until the parent's reply arrives", async () => {
+test("caller_ping keeps a non-interactive child alive until the parent's reply arrives", async () => {
   const dir = mkdtempSync(join(tmpdir(), "caller-ping-"));
   const sessionFile = join(dir, "child.jsonl");
-  const saved = { session: process.env.PI_SUBAGENT_SESSION, autoExit: process.env.PI_SUBAGENT_AUTO_EXIT };
+  const saved = { session: process.env.PI_SUBAGENT_SESSION, interactive: process.env.PI_SUBAGENT_INTERACTIVE };
   process.env.PI_SUBAGENT_SESSION = sessionFile;
-  process.env.PI_SUBAGENT_AUTO_EXIT = "1";
+  delete process.env.PI_SUBAGENT_INTERACTIVE;
   try {
     const handlers = new Map<string, Function>();
     const tools = new Map<string, any>();
@@ -97,7 +97,7 @@ test("caller_ping keeps an auto-exit child alive until the parent's reply arrive
     handlers.get("agent_end")!(done, ctx);
     assert.equal(shutdowns, 1, "run ends normally after the reply turn");
   } finally {
-    for (const [key, value] of [["PI_SUBAGENT_SESSION", saved.session], ["PI_SUBAGENT_AUTO_EXIT", saved.autoExit]] as const) {
+    for (const [key, value] of [["PI_SUBAGENT_SESSION", saved.session], ["PI_SUBAGENT_INTERACTIVE", saved.interactive]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
@@ -108,4 +108,39 @@ test("caller_ping keeps an auto-exit child alive until the parent's reply arrive
 test("exiting tools are refused while children or tmux panes are pending", () => {
   assert.equal(pendingChildrenError("pinging", 0), null);
   assert.match(pendingChildrenError("pinging", 2)!.message, /^2 of your .* pinging now would exit/);
+});
+
+test("interactive child never auto-exits; idle snapshot carries pending children", () => {
+  const dir = mkdtempSync(join(tmpdir(), "interactive-"));
+  const keys = ["PI_SUBAGENT_INTERACTIVE", "PI_SUBAGENT_ID", "PI_SUBAGENT_ACTIVITY_FILE"] as const;
+  const saved = keys.map((k) => process.env[k]);
+  const activityFile = join(dir, "act.json");
+  process.env.PI_SUBAGENT_INTERACTIVE = "1";
+  process.env.PI_SUBAGENT_ID = "kid";
+  process.env.PI_SUBAGENT_ACTIVITY_FILE = activityFile;
+  const g = globalThis as any;
+  const runningKey = Symbol.for("pi-tmux-subagents/running");
+  const savedRunning = g[runningKey];
+  try {
+    const handlers = new Map<string, Function>();
+    const pi = {
+      on: (event: string, handler: Function) => { handlers.set(event, handler); },
+      registerTool: () => {},
+      registerShortcut: () => {},
+    } as unknown as ExtensionAPI;
+    childExtension(pi);
+    let shutdowns = 0;
+    const ctx = { shutdown: () => { shutdowns++; } };
+    g[runningKey] = new Map([["x", {}], ["y", {}]]);
+    handlers.get("agent_start")!({});
+    handlers.get("agent_end")!({ messages: [{ role: "assistant", stopReason: "stop" }] }, ctx);
+    assert.equal(shutdowns, 0);
+    const activity = JSON.parse(readFileSync(activityFile, "utf8"));
+    assert.equal(activity.phase, "waiting");
+    assert.equal(activity.pendingChildren, 2);
+  } finally {
+    g[runningKey] = savedRunning;
+    keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

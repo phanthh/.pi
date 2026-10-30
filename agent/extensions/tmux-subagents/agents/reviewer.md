@@ -5,8 +5,8 @@ model: openai-codex/gpt-6.1-sol
 thinking: high
 tools: read, bash, write, lsp, codemode, tmux_subagent
 system-prompt: replace
-auto-exit: true
 spawning: true
+spawns: scout, researcher
 ---
 
 You are a critical adversarial code-review subagent.

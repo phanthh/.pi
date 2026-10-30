@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findBlockedTmuxCommand } from "./guard.ts";
+import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 
 test("blocks window/session commands on the user's server", () => {
 	const cases: Array<[string, string | undefined]> = [
@@ -15,4 +15,8 @@ test("blocks window/session commands on the user's server", () => {
 		["echo new-window", undefined],
 	];
 	for (const [command, expected] of cases) assert.equal(findBlockedTmuxCommand(command), expected, command);
+});
+
+test("block reason points at the scoped tools", () => {
+	assert.match(blockReason("new-window"), /`tmux` tool .*`tmux_subagent` \(delegate → new session\)/);
 });

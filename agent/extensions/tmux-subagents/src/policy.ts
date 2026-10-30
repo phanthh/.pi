@@ -24,17 +24,6 @@ export function resolveDenyTools(
   return [...denied];
 }
 
-/** A caller `tools` override may only narrow a role's own allowlist, never widen it. */
-export function resolveToolAllowlist(roleTools: string | undefined, requested: string | undefined): string | undefined {
-  if (!requested) return roleTools;
-  if (!roleTools) return requested;
-  const role = new Set(csv(roleTools));
-  const kept = csv(requested).filter((tool) => role.has(tool));
-  // Empty would mean "no --tools" = default tools, a widening.
-  if (kept.length === 0) throw new Error(`None of tools "${requested}" are in the role allowlist (${roleTools}).`);
-  return kept.join(",");
-}
-
 /** null = unrestricted. Empty set = may launch nothing. */
 export function allowedSpawns(raw: string | undefined = process.env.PI_SUBAGENT_SPAWNS): Set<string> | null {
   return raw === undefined ? null : new Set(csv(raw));
@@ -48,9 +37,9 @@ export function spawnRefusal(agent: string | undefined, allowed: Set<string> | n
 }
 
 export interface LaunchSpec {
-  version: 1;
+  version: 2;
   name: string;
-  agent?: string;
+  agent: string;
   /** `provider/model[:thinking]` passed to `--model`. */
   model?: string;
   systemPrompt?: { mode: "append" | "replace"; text: string };
@@ -59,7 +48,10 @@ export interface LaunchSpec {
   denyTools: string[];
   /** Undefined = unrestricted. */
   spawns?: string[];
-  autoExit: boolean;
+  /** Child gets its own tmux session and owns it (frontmatter `lead`). */
+  lead: boolean;
+  /** No auto-exit; ends via subagent_done, stop, or the user (frontmatter `interactive`). */
+  interactive: boolean;
   cwd?: string;
   agentDir?: string;
 }
@@ -77,7 +69,9 @@ export function readLaunchSpec(sessionFile: string): LaunchSpec | null {
   if (!existsSync(file)) return null;
   try {
     const data = JSON.parse(readFileSync(file, "utf8"));
-    return data?.version === 1 && Array.isArray(data.denyTools) ? (data as LaunchSpec) : null;
+    const valid = data?.version === 2 && typeof data.agent === "string" && Array.isArray(data.denyTools) &&
+      typeof data.lead === "boolean" && typeof data.interactive === "boolean";
+    return valid ? (data as LaunchSpec) : null;
   } catch {
     return null;
   }

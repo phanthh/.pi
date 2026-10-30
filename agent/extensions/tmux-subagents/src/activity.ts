@@ -45,6 +45,8 @@ export interface SubagentActivityState {
   toolName?: string;
   toolStartedAt?: number;
   toolEndedAt?: number;
+  /** Own subagents/tmux runs still pending when the child went idle. */
+  pendingChildren?: number;
 }
 
 export type ActivityReadResult =
@@ -58,7 +60,7 @@ export interface SubagentActivityRecorder {
   input(): void;
   beforeAgentStart(): void;
   agentStart(): void;
-  agentEndWaiting(): void;
+  agentEndWaiting(pendingChildren?: number): void;
   agentEndDone(): void;
   turnStart(turnIndex?: number): void;
   turnEnd(turnIndex?: number): void;
@@ -174,6 +176,7 @@ function validateActivity(value: unknown, expectedRunningChildId: string): Activ
     validateOptionalFiniteNumber(object, "activeSince"),
     validateOptionalFiniteNumber(object, "waitingSince"),
     validateOptionalInteger(object, "turnIndex"),
+    validateOptionalInteger(object, "pendingChildren"),
     validateOptionalFiniteNumber(object, "toolStartedAt"),
     validateOptionalFiniteNumber(object, "toolEndedAt"),
     validateOptionalActivityString(object, "messageEventType"),
@@ -410,11 +413,12 @@ export function createSubagentActivityRecorder(params: {
         markActive(current, "agent", observedAt);
       }, "immediate");
     },
-    agentEndWaiting() {
+    agentEndWaiting(pendingChildren = 0) {
       record("agent_end", (current, observedAt) => {
         clearActiveState(current);
         current.phase = "waiting";
         current.waitingSince = observedAt;
+        current.pendingChildren = pendingChildren;
       }, "immediate");
     },
     agentEndDone() {

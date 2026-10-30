@@ -5,7 +5,6 @@ model: openai-codex/gpt-6-luna
 thinking: high
 tools: read, bash, write, lsp, codemode
 system-prompt: replace
-auto-exit: true
 spawning: false
 ---
 

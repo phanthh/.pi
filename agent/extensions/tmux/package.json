@@ -9,6 +9,6 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@pi-ext/tmux-layout": "workspace:*"
+		"@pi-ext/tmux-windows": "workspace:*"
 	}
 }

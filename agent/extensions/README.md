@@ -17,9 +17,9 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | `lsp` | `lsp` tool | Language-server navigation, diagnostics, and refactors |
 | [`project-skill-rules`](project-skill-rules/README.md) | Prompt hook | Filters project skills by working directory |
 | [`reload`](reload/README.md) | `reload_pi` tool | Reloads extensions and resources, then resumes work |
-| `tmux` | `tmux` tool | Manages named panes for long-running processes |
-| `tmux-layout` | Library | Shared pane layout helpers |
-| [`tmux-subagents`](tmux-subagents/README.md) | `tmux_subagent` tool | Runs asynchronous pi subagents in visible tmux panes |
+| `tmux` | `tmux` tool | Manages named windows for long-running processes |
+| `tmux-windows` | Library | Owner-tagged tmux window/session helpers |
+| [`tmux-subagents`](tmux-subagents/README.md) | `tmux_subagent` tool | Runs asynchronous pi subagents in tmux windows (lead agents: own session) |
 | [`ttsr`](ttsr/README.md) | Stream hook | Interrupts and retries responses that violate markdown rules |
 | [`usage`](usage/README.md) | Footer status, `/usage` | Claude, Codex, and OpenCode Go subscription usage |
 | `web-fetch` | `web_fetch` tool | Fetches and extracts readable web content |

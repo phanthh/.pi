@@ -352,3 +352,23 @@ export function formatStatusAggregate(lines: string[], lineLimit: number): strin
   if (overflow > 0) bulletLines.push(`• +${overflow} more running.`);
   return `Subagent status:\n${bulletLines.join("\n")}`;
 }
+
+export const IDLE_STEER_AFTER_MS = 120_000;
+
+/**
+ * Interactive children never auto-exit, so one that went quiet without
+ * subagent_done would sit forever. Note it to the spawner once per idle
+ * episode (keyed by its waitingSince), unless something will wake it anyway.
+ */
+export function idleSteerDue(o: {
+  interactive: boolean;
+  snapshot: Pick<StatusSnapshot, "kind" | "waitingSinceMs">;
+  pendingChildren: number;
+  awaitingReply: boolean;
+  steeredFor: number | null;
+  now: number;
+}): boolean {
+  const since = o.snapshot.waitingSinceMs;
+  return o.interactive && o.snapshot.kind === "waiting" && since != null &&
+    o.now - since >= IDLE_STEER_AFTER_MS && o.pendingChildren === 0 && !o.awaitingReply && o.steeredFor !== since;
+}

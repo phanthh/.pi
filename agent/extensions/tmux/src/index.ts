@@ -1,16 +1,17 @@
 /**
- * tmux extension — gives the agent named panes for long-running processes.
+ * tmux extension — gives the agent named windows for long-running processes.
  *
  * Actions:
- *   run   — create a named pane (next depth column, see tmux-layout) and run a command in it
- *           (always watch completion, save a snapshot in the session folder, close the pane,
+ *   run   — create a named detached window in pi's own tmux session and run a command in it
+ *           (always watch completion, save a snapshot in the session folder, close the window,
  *            and steer the snapshot path + exit code back to the agent)
- *   read  — capture output from a named pane
- *   send  — send keys to a named pane (C-c, Enter, q, etc.)
- *   stop  — save a snapshot and close a named pane
- *   list  — list all managed panes
+ *   read  — capture output from a named window
+ *   send  — send keys to a named window (C-c, Enter, q, etc.)
+ *   stop  — save a snapshot and close a named window
+ *   list  — list this pi's windows
  *
- * Panes are tagged with @pi_name tmux user options for discovery.
+ * Windows carry @pi_owner=<pi's TMUX_PANE> + @pi_name (see tmux-windows); each pi
+ * sees only its own. The `pane` parameter keeps its name for schema stability.
  * The tool is disabled when not running inside tmux, or when pi is running inside herdr.
  */
 
@@ -22,16 +23,14 @@ import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-wo
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { closeWorkerPane, createWorkerPane, isPaneAlive } from "@pi-ext/tmux-layout";
+import { closeWindow, createWindow, isPaneAlive, ownedWindows, userShell, viaUserShell } from "@pi-ext/tmux-windows";
 import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 import { registerResurrect } from "./resurrect.ts";
 
 interface PaneInfo {
 	name: string;
 	paneId: string;
-	alive: boolean;
 	command: string;
-	pid: string;
 }
 
 interface PaneRun {
@@ -54,7 +53,8 @@ interface SharedState {
 	sweepNow?: () => void;
 }
 
-const STATE_KEY = Symbol.for("pi-tmux/state");
+// v2: runs are managed windows. Pre-window (pane) state stays under the old key, handled by its own closures.
+const STATE_KEY = Symbol.for("pi-tmux/state-v2");
 const SWEEP_INTERVAL_MS = 2000;
 
 function shellQuote(value: string): string {
@@ -96,8 +96,7 @@ export default function (pi: ExtensionAPI) {
 		if (sub) return { block: true, reason: blockReason(sub) };
 	});
 
-	let myPaneId: string | null = null;
-	let myWindowId: string | null = null;
+	const myPaneId = process.env.TMUX_PANE;
 	// Runs outlive this extension instance: after /reload or a session switch the old `pi`
 	// is stale (its exec/sendMessage throw), so pending runs always report via the latest one.
 	const g = globalThis as any;
@@ -136,9 +135,9 @@ export default function (pi: ExtensionAPI) {
 			}
 			// Never close before the snapshot is safely on disk.
 			const alive = isPaneAlive(run.paneId);
-			const output = alive ? await capturePane(run.paneId) : "(pane was closed before its output could be captured)\n";
+			const output = alive ? await capturePane(run.paneId) : "(window was closed before its output could be captured)\n";
 			await writeFile(run.fullOutputPath, output, { mode: 0o600 });
-			if (alive) closeWorkerPane(run.paneId);
+			if (alive) closeWindow(run.paneId);
 			const channel = watchers.get(run.paneId);
 			// Release a wait-for client the runner will never signal.
 			if (channel && reason !== "finished") await api().exec("tmux", ["wait-for", "-S", channel]);
@@ -156,7 +155,7 @@ export default function (pi: ExtensionAPI) {
 			api().sendMessage(
 				{
 					customType: "tmux_result",
-					content: `tmux pane '${run.pane}' ${reason}: '${run.command}' (exit ${exitCode}, ${result.elapsed}s). Pane closed.\nSnapshot: ${run.fullOutputPath}\nUse the read tool with this path to inspect pane content.`,
+					content: `tmux window '${run.pane}' ${reason}: '${run.command}' (exit ${exitCode}, ${result.elapsed}s). Window closed.\nSnapshot: ${run.fullOutputPath}\nUse the read tool with this path to inspect window content.`,
 					display: true,
 					details: { pane: run.pane, command: run.command, ...result },
 				},
@@ -190,75 +189,24 @@ export default function (pi: ExtensionAPI) {
 		return finishPane(run, "stopped (stop/restart)");
 	}
 
-	// Discover our own pane/window/session on startup
-	pi.on("session_start", async () => {
-		try {
-			const result = await api().exec("tmux", [
-				"display-message",
-				"-p",
-				"-t",
-				process.env.TMUX_PANE || "",
-				"#{pane_id}\t#{window_id}\t#{session_id}",
-			]);
-			if (result.code === 0) {
-				const [paneId, windowId] = result.stdout.trim().split("\t");
-				myPaneId = paneId || null;
-				myWindowId = windowId || null;
-			}
-		} catch {}
+	// Quit: run windows would outlive pi with nobody to report to. Other reasons
+	// keep them; the shared state delivers results through the next instance.
+	pi.on("session_shutdown", (event) => {
+		if (event.reason !== "quit") return;
+		clearInterval(state.sweep);
+		for (const w of ownedWindows("@pi_name")) closeWindow(w.paneId);
 	});
 
 	// --- helpers ---
 
-	function requireWindowTarget(): string {
-		if (!myWindowId) throw new Error("Could not determine current tmux window.");
-		return myWindowId;
+	function listAllPanes(): PaneInfo[] {
+		return ownedWindows("@pi_name")
+			.filter((w) => w.paneId !== myPaneId)
+			.map((w) => ({ name: w.tag, paneId: w.paneId, command: w.command }));
 	}
 
-	async function findPane(name: string): Promise<PaneInfo | null> {
-		const result = await api().exec("tmux", [
-			"list-panes",
-			"-t",
-			requireWindowTarget(),
-			"-F",
-			"#{pane_id}\t#{@pi_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_dead}",
-		]);
-		if (result.code !== 0) return null;
-
-		for (const line of result.stdout.trim().split("\n")) {
-			const [paneId, paneName, command, pid, dead] = line.split("\t");
-			if (paneName === name) {
-				return { name: paneName, paneId, alive: dead !== "1", command, pid };
-			}
-		}
-		return null;
-	}
-
-	async function listAllPanes(): Promise<PaneInfo[]> {
-		const result = await api().exec("tmux", [
-			"list-panes",
-			"-t",
-			requireWindowTarget(),
-			"-F",
-			"#{pane_id}\t#{@pi_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_dead}",
-		]);
-		if (result.code !== 0) return [];
-
-		const panes: PaneInfo[] = [];
-		for (const line of result.stdout.trim().split("\n")) {
-			if (!line.trim()) continue;
-			const [paneId, paneName, command, pid, dead] = line.split("\t");
-			// Skip pi's own pane
-			if (paneId === myPaneId) continue;
-			panes.push({
-				name: paneName?.trim() || "",
-				paneId,
-				alive: dead !== "1",
-				command,
-				pid,
-			});
-		}
-		return panes;
+	function findPane(name: string): PaneInfo | null {
+		return listAllPanes().find((p) => p.name === name) ?? null;
 	}
 
 	async function capturePane(paneId: string, lines?: number): Promise<string> {
@@ -277,21 +225,21 @@ export default function (pi: ExtensionAPI) {
 		name: "tmux",
 		label: "tmux",
 		description:
-			"Manage tmux panes for long-running processes (dev servers, watchers, etc). " +
-			"Actions: run (start command in named pane), read (capture output), send (send keys like C-c), stop (snapshot and close pane), list (show panes). " +
-			"All commands automatically close their pane on completion and deliver exit code + snapshot path in the current session folder. Use the read tool on that path for results.",
+			"Manage named tmux windows for long-running processes (dev servers, watchers, etc). Windows open detached in your own tmux session. " +
+			"Actions: run (start command in named window), read (capture output), send (send keys like C-c), stop (snapshot and close window), list (show your windows). " +
+			"All commands automatically close their window on completion and deliver exit code + snapshot path in the current session folder. Use the read tool on that path for results.",
 		promptGuidelines: [
 			"Use `tmux` run for long-running processes (dev servers, watchers, builds) instead of `bash`.",
 			"Use `bash` only for short-lived commands that complete quickly.",
 			"Every tmux run automatically delivers completion + a snapshot file path; do not poll for completion. Read the snapshot with the read tool.",
-			"Never create, kill, or move tmux windows (tabs) or sessions (`tmux new-window`, `new-session`, `break-pane`, `kill-window`, ...). They are user-managed; such commands are blocked. Use this tool's panes instead.",
-			"Layout: one full-height column per spawn depth, left to right: pi | its panes (tmux tool + subagents) | their panes | … Each column stacks vertically, auto-rebalanced to equal heights.",
+			"Each run opens a detached window in your own tmux session; you see and control only windows you created. The `pane` param is the window name.",
+			"Never create, kill, or move tmux windows or sessions via bash (`tmux new-window`, `new-session`, `break-pane`, `kill-window`, ...); such commands are blocked. Use this tool (windows) or `tmux_subagent` instead.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["run", "read", "send", "stop", "list"] as const, {
 				description: "Action to perform",
 			}),
-			pane: Type.Optional(Type.String({ description: "Pane name (required for run/read/send/stop)" })),
+			pane: Type.Optional(Type.String({ description: "Window name (required for run/read/send/stop)" })),
 			command: Type.Optional(Type.String({ description: "Bash command to run (for run action)" })),
 			keys: Type.Optional(
 				Type.String({
@@ -300,14 +248,14 @@ export default function (pi: ExtensionAPI) {
 			),
 			text: Type.Optional(
 				Type.String({
-					description: "Literal text to type into the pane (for send action). Sent as-is, no key lookup.",
+					description: "Literal text to type into the window (for send action). Sent as-is, no key lookup.",
 				}),
 			),
 			lines: Type.Optional(
 				Type.Number({ description: "Scrollback lines to capture (for read action, default: 20)" }),
 			),
 			restart: Type.Optional(
-				Type.Boolean({ description: "Kill existing pane before starting (for run action, default: false)" }),
+				Type.Boolean({ description: "Kill existing window before starting (for run action, default: false)" }),
 			),
 			cwd: Type.Optional(Type.String({ description: "Working directory (for run action)" })),
 		}),
@@ -321,10 +269,10 @@ export default function (pi: ExtensionAPI) {
 					if (!pane) throw new Error("'pane' is required for run");
 					if (!command) throw new Error("'command' is required for run");
 
-					const existing = await findPane(pane);
-					if (existing?.alive && !restart) {
+					const existing = findPane(pane);
+					if (existing && !restart) {
 						throw new Error(
-							`Pane '${pane}' already exists (running ${existing.command}). Use restart: true to replace it.`,
+							`Window '${pane}' already exists (running ${existing.command}). Use restart: true to replace it.`,
 						);
 					}
 					if (existing) await killPane(existing, ctx.sessionManager.getSessionDir());
@@ -353,17 +301,16 @@ ${command}
 )
 `;
 					await writeFile(run.scriptPath!, script, { mode: 0o600 });
-					// The pane runs the script as its own command (inside an interactive shell, for
-					// the user's rc env). Typing it into a fresh shell could be dropped while the shell
-					// starts, leaving an idle pane that looks like a running check.
-					const inner = `bash ${shellQuote(run.scriptPath!)}; exec "\${SHELL:-/bin/sh}"`;
+					// The window runs the script as its own command (inside an interactive shell, for
+					// the user's rc env); the trailing shell keeps it open until finishPane captures it.
+					const inner = `bash ${shellQuote(run.scriptPath!)}; exec ${shellQuote(userShell())}`;
 					let newPaneId: string;
 					try {
-						newPaneId = createWorkerPane({
-							title: pane,
+						newPaneId = createWindow({
+							name: pane,
 							tag: { key: "@pi_name", value: pane },
 							cwd,
-							command: `exec "\${SHELL:-/bin/sh}" -ic ${shellQuote(inner)}`,
+							command: viaUserShell(inner),
 						});
 					} catch (error) {
 						await rm(dir, { recursive: true, force: true });
@@ -383,7 +330,7 @@ ${command}
 							api().sendMessage(
 								{
 									customType: "tmux_result",
-									content: `tmux pane '${pane}' watcher error: ${String(error)}. Pane may still be open; inspect it with tmux read/list.`,
+									content: `tmux window '${pane}' watcher error: ${String(error)}. Window may still be open; inspect it with tmux read/list.`,
 									display: true,
 									details: { pane, command, exitCode: -1, elapsed: 0, error: String(error) },
 								},
@@ -394,7 +341,7 @@ ${command}
 					return {
 						content: [{
 							type: "text",
-							text: `Started '${command}' in pane '${pane}' (${newPaneId}). Completion will be delivered automatically; do not poll.\nFinal snapshot will be saved to: ${run.fullOutputPath}\nUse the read tool with this path after completion.`,
+							text: `Started '${command}' in window '${pane}' (${newPaneId}). Completion will be delivered automatically; do not poll.\nFinal snapshot will be saved to: ${run.fullOutputPath}\nUse the read tool with this path after completion.`,
 						}],
 						details: { action: "run", pane, paneId: newPaneId, command, fullOutputPath: run.fullOutputPath },
 					};
@@ -404,8 +351,8 @@ ${command}
 					const { pane, lines } = params;
 					if (!pane) throw new Error("'pane' is required for read");
 
-					const existing = await findPane(pane);
-					if (!existing) throw new Error(`Pane '${pane}' not found. Use action 'list' to see managed panes.`);
+					const existing = findPane(pane);
+					if (!existing) throw new Error(`Window '${pane}' not found. Use action 'list' to see your windows.`);
 
 					const output = await capturePane(existing.paneId, lines ?? 20);
 
@@ -421,7 +368,7 @@ ${command}
 
 					return {
 						content: [{ type: "text", text }],
-						details: { action: "read", pane, alive: existing.alive, command: existing.command },
+						details: { action: "read", pane, alive: true, command: existing.command },
 					};
 				}
 
@@ -430,8 +377,8 @@ ${command}
 					if (!pane) throw new Error("'pane' is required for send");
 					if (!keys && !text) throw new Error("'keys' or 'text' is required for send");
 
-					const existing = await findPane(pane);
-					if (!existing) throw new Error(`Pane '${pane}' not found.`);
+					const existing = findPane(pane);
+					if (!existing) throw new Error(`Window '${pane}' not found.`);
 
 					// Send literal text first (if provided)
 					if (text) {
@@ -446,7 +393,7 @@ ${command}
 
 					const desc = [text && `"${text}"`, keys].filter(Boolean).join(" + ");
 					return {
-						content: [{ type: "text", text: `Sent ${desc} to pane '${pane}'` }],
+						content: [{ type: "text", text: `Sent ${desc} to window '${pane}'` }],
 						details: { action: "send", pane, keys, text },
 					};
 				}
@@ -455,34 +402,28 @@ ${command}
 					const { pane } = params;
 					if (!pane) throw new Error("'pane' is required for stop");
 
-					const existing = await findPane(pane);
-					if (!existing) throw new Error(`Pane '${pane}' not found.`);
+					const existing = findPane(pane);
+					if (!existing) throw new Error(`Window '${pane}' not found.`);
 
 					const result = await killPane(existing, ctx.sessionManager.getSessionDir());
 
 					return {
-						content: [{ type: "text", text: `Stopped pane '${pane}'. Snapshot: ${result.fullOutputPath}\nUse the read tool with this path to inspect pane content.` }],
+						content: [{ type: "text", text: `Stopped window '${pane}'. Snapshot: ${result.fullOutputPath}\nUse the read tool with this path to inspect window content.` }],
 						details: { action: "stop", pane, ...result },
 					};
 				}
 
 				case "list": {
-					const panes = await listAllPanes();
+					const panes = listAllPanes();
 
 					if (panes.length === 0) {
 						return {
-							content: [{ type: "text", text: "No panes (besides pi)." }],
+							content: [{ type: "text", text: "No windows." }],
 							details: { action: "list", panes: [] },
 						};
 					}
 
-					const text = panes
-						.map((p) => {
-							const label = p.name || `[${p.command}]`;
-							const managed = p.name ? "" : " (unmanaged)";
-							return `${label}: ${p.alive ? "running" : "dead"} (${p.command}) [${p.paneId}]${managed}`;
-						})
-						.join("\n");
+					const text = panes.map((p) => `${p.name}: running (${p.command}) [${p.paneId}]`).join("\n");
 
 					return {
 						content: [{ type: "text", text }],
@@ -556,16 +497,9 @@ ${command}
 
 				case "list": {
 					const panes = details.panes as PaneInfo[];
-					if (!panes?.length) return new Text(theme.fg("dim", "no panes"), 0, 0);
+					if (!panes?.length) return new Text(theme.fg("dim", "no windows"), 0, 0);
 
-					const lines = panes.map((p) => {
-						const dot = p.alive ? theme.fg("success", "●") : theme.fg("error", "●");
-						const label = p.name
-							? theme.fg("accent", p.name)
-							: theme.fg("muted", `[${p.command}]`);
-						const extra = p.name ? "" : theme.fg("dim", " (unmanaged)");
-						return `${dot} ${label} ${theme.fg("dim", p.command)}${extra}`;
-					});
+					const lines = panes.map((p) => `${theme.fg("success", "●")} ${theme.fg("accent", p.name)} ${theme.fg("dim", p.command)}`);
 					return new Text(lines.join("\n"), 0, 0);
 				}
 

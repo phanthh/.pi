@@ -9,7 +9,6 @@ import {
   launchSpecFile,
   readLaunchSpec,
   resolveDenyTools,
-  resolveToolAllowlist,
   spawnRefusal,
   writeLaunchSpec,
 } from "./policy.ts";
@@ -21,22 +20,15 @@ test("denies accumulate: role denies ∪ inherited, plus tmux_subagent when spaw
   assert.deepEqual(resolveDenyTools(null, []), []);
 });
 
-test("tools override only narrows a role allowlist", () => {
-  assert.equal(resolveToolAllowlist("read, bash, lsp", undefined), "read, bash, lsp");
-  assert.equal(resolveToolAllowlist("read, bash, lsp", "read, edit"), "read");
-  assert.equal(resolveToolAllowlist(undefined, "read, edit"), "read, edit");
-  assert.throws(() => resolveToolAllowlist("read", "edit"), /role allowlist/);
-});
-
-test("spawns list gates launch and resume", () => {
+test("spawns list gates launch and resume generically", () => {
   assert.equal(allowedSpawns(undefined), null);
-  assert.equal(spawnRefusal("delegate", null), null);
+  assert.equal(spawnRefusal("anything", null), null);
   assert.equal(spawnRefusal(undefined, null), null);
-  const allowed = allowedSpawns("scout, researcher")!;
-  assert.equal(spawnRefusal("scout", allowed), null);
-  assert.match(spawnRefusal("delegate", allowed)!, /may launch only: scout, researcher/);
+  const allowed = allowedSpawns("a, b")!;
+  assert.equal(spawnRefusal("a", allowed), null);
+  assert.match(spawnRefusal("c", allowed)!, /may launch only: a, b/);
   assert.match(spawnRefusal(undefined, allowed)!, /without a known agent/);
-  assert.match(spawnRefusal("scout", allowedSpawns(""))!, /may launch only: nothing/);
+  assert.match(spawnRefusal("a", allowedSpawns(""))!, /may launch only: nothing/);
 });
 
 test("launch spec round-trips; corrupt or foreign files read as null", () => {
@@ -45,23 +37,29 @@ test("launch spec round-trips; corrupt or foreign files read as null", () => {
     const session = join(dir, "s.jsonl");
     assert.equal(readLaunchSpec(session), null);
     const spec: LaunchSpec = {
-      version: 1,
+      version: 2,
       name: "Rev",
-      agent: "reviewer",
+      agent: "role-x",
       model: "p/m:high",
       systemPrompt: { mode: "replace", text: "be strict\nline 2" },
       tools: "read,bash,caller_ping,subagent_done,codemode",
       denyTools: ["ask"],
-      spawns: ["scout"],
-      autoExit: true,
+      spawns: ["role-y"],
+      lead: true,
+      interactive: false,
       cwd: "/x",
     };
     writeLaunchSpec(session, spec);
     assert.deepEqual(readLaunchSpec(session), spec);
     writeFileSync(launchSpecFile(session), "{nope");
     assert.equal(readLaunchSpec(session), null);
-    writeFileSync(launchSpecFile(session), JSON.stringify({ version: 2, denyTools: [] }));
-    assert.equal(readLaunchSpec(session), null);
+    for (const stale of [
+      { version: 1, name: "old", denyTools: [], autoExit: true },
+      { version: 2, name: "partial", agent: "x", denyTools: [] },
+    ]) {
+      writeFileSync(launchSpecFile(session), JSON.stringify(stale));
+      assert.equal(readLaunchSpec(session), null);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

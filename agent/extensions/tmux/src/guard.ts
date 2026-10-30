@@ -1,6 +1,6 @@
 /**
- * Windows (tabs) and sessions are user-managed. The agent may only add/remove
- * panes in its own window, via the `tmux` / `tmux_subagent` tools.
+ * Windows (tabs) and sessions are only created/killed through the `tmux` and
+ * `tmux_subagent` tools, which tag and scope them to their owner.
  */
 
 const BLOCKED: Record<string, true> = {
@@ -67,8 +67,8 @@ export function findBlockedTmuxCommand(command: string): string | undefined {
 
 export function blockReason(sub: string): string {
 	return (
-		`Blocked \`tmux ${sub}\`: tmux windows (tabs) and sessions are created/killed manually by the user only. ` +
-		"Use the `tmux` tool (action: run; completion is always automatic) or `tmux_subagent` — they add panes in the current window. " +
+		`Blocked \`tmux ${sub}\`: agents must not create/kill tmux windows or sessions directly. ` +
+		"Use the `tmux` tool (own windows; completion is always automatic) or `tmux_subagent` (delegate → new session). " +
 		"For scratch tmux testing use an isolated server (`tmux -L <name> ...`)."
 	);
 }

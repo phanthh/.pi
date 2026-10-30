@@ -18,7 +18,7 @@ extensions/
 - `pnpm check` (= `tsc --noEmit`) is the typecheck gate. Run it after every edit.
 - `/reload` in a live session hot-reloads these (auto-discovered location).
 - New extension = new dir + `package.json` with `pi.extensions` + `src/index.ts`; then `pnpm install`.
-- Shared code goes in a plain library package (see `@pi-ext/tmux-layout`), consumed via
+- Shared code goes in a plain library package (see `@pi-ext/tmux-windows`), consumed via
   `"@pi-ext/x": "workspace:*"`.
 
 ## Extensions
@@ -31,9 +31,9 @@ extensions/
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
 | `idle-timer` | footer status | `💤 <dur>` while waiting on user (agent settled, or blocking UI prompt mid-run); resumed sessions count from last branch entry. `pnpm --filter @pi-ext/idle-timer test` |
 | `lsp` | `lsp` tool | LSP client, per-project-root servers (typescript, pyright, gopls, rust-analyzer). pyright venv: `.venv`/`venv`, else computed poetry env (no `poetry` call); none → result carries a warning. Missing report ≠ clean: diagnostics says so |
-| `tmux` | `tmux` tool + `tool_call` guard | named panes for long-running processes; pane runs `command.sh` as its own shell-command (no send-keys); run state lives on `globalThis` so results survive `/reload`; 2s sweep delivers runs whose wait-for was lost or whose pane was closed externally; `src/guard.ts` blocks `bash`/`tmux`-tool commands that create/kill/move tmux windows or sessions (user-managed; `-L`/`-S` isolated servers allowed). Guard: `pnpm --filter pi-tmux test`; layout: `pnpm --filter @pi-ext/tmux-layout test` |
-| `tmux-layout` | library | pane creation/close/balance, shared by `tmux` + `tmux-subagents`; one full-height column per spawn depth (`@pi_depth` tags). `pnpm --filter @pi-ext/tmux-layout test` (live, isolated tmux server) |
-| `tmux-subagents` | `tmux_subagent` tool | async child pi sessions in panes + live widget; agent defs in `agents/*.md` (model fixed per def, no caller override). `pnpm --filter pi-tmux-subagents test` |
+| `tmux` | `tmux` tool + `tool_call` guard | named detached windows in pi's own tmux session, scoped to their owner (`@pi_owner` = pi's `TMUX_PANE`, `@pi_name`); window runs `command.sh` as its own shell-command (no send-keys); run state lives on `globalThis` so results survive `/reload`; 2s sweep delivers runs whose wait-for was lost or whose window was closed externally; quit closes own run windows; `src/guard.ts` blocks `bash`/`tmux`-tool commands that create/kill/move tmux windows or sessions (`-L`/`-S` isolated servers allowed). `pnpm --filter pi-tmux test` |
+| `tmux-windows` | library | create/close owner-tagged windows (own session) and sessions, list owned ones; shared by `tmux` + `tmux-subagents`. `pnpm --filter @pi-ext/tmux-windows test` (live, isolated tmux server) |
+| `tmux-subagents` | `tmux_subagent` tool | async child pi sessions + live widget; child = window in spawner's session, `lead: true` def = own new tmux session; live children survive `/reload` (globalThis handoff); bundled agent defs in `agents/*.md` are the only policy source (no agent names in code). Tests include e2e on isolated tmux with a stub `pi`. `pnpm --filter pi-tmux-subagents test` |
 | `ttsr` | stream watcher | Time-Traveling Stream Rules: aborts mid-stream on rule violation, injects rule, retries. Rules = md+frontmatter in `rules/`, shadowed by `~/.pi/agent/ttsr` then `.pi/ttsr` |
 | `up-history` | native editor Up/Down history | seeds latest 30 unique saved user prompts for current cwd; preserves custom editor, honors custom session dirs, TUI-only. No settings/commands/history files. `pnpm --filter @pi-ext/up-history test` |
 | `usage` | footer status + `/usage` | Claude (main + anthropic-auth fallbacks), Codex, OpenCode Go subscription windows; polls TTL-gated via shared `~/.pi/agent/cache/usage.json`, live updates from `after_provider_response` headers + Codex `codex.rate_limits` stream events. Has `README.md`. `pnpm --filter @pi-ext/usage test` |
@@ -44,8 +44,8 @@ extensions/
 
 - Tool schemas via `typebox` `Type.*`; renderers via `@earendil-works/pi-tui` (`Text`, etc.).
 - Per-extension runtime config lives in `~/.pi/agent/<name>.json` (read with `getAgentDir()`), not here.
-- Env signals available: `PI_SUBAGENT_DEPTH`, `PI_SUBAGENT_ID` (set by tmux-subagents) — used to change
-  behaviour between main session and children.
+- Env signal available: `PI_SUBAGENT_ID` (set by tmux-subagents for every child) — used to change
+  behaviour between the manual (0-depth) session and children.
 - Nontrivial extensions carry their own `README.md` (`tmux-subagents`, `ttsr`, `usage`) — read it
   before touching them; keep it in sync with behaviour changes.
 - pi runs from source (`~/dev/pi`, `~/.local/bin/pi` → `packages/coding-agent/dist/cli.js`); pi packages are `link:`ed to

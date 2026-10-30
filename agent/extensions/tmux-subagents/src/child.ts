@@ -17,7 +17,7 @@ export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
 }
 
 /**
- * Manual input must not strand an auto-exit subagent: if the latest agent turn
+ * Manual input must not strand a non-interactive subagent: if the latest agent turn
  * completed normally, close the session. Escape/abort leaves it open.
  * stopReason "error" also exits so the parent gets woken — paired with
  * findLatestAssistantError() so it learns it was an error, not a completion.
@@ -97,7 +97,8 @@ export default function (pi: ExtensionAPI) {
   const subagentName = process.env.PI_SUBAGENT_NAME ?? "";
   const subagentAgent = process.env.PI_SUBAGENT_AGENT ?? "";
   const deniedToolsValue = process.env.PI_DENY_TOOLS;
-  const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
+  // Interactive children (frontmatter `interactive`) stay up until subagent_done/stop/user quit.
+  const autoExit = process.env.PI_SUBAGENT_INTERACTIVE !== "1";
   const recorder = createSubagentActivityRecorder({
     runningChildId: process.env.PI_SUBAGENT_ID,
     activityFile: process.env.PI_SUBAGENT_ACTIVITY_FILE,
@@ -191,7 +192,8 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    recorder.agentEndWaiting();
+    // Parent's idle note skips children whose own children will wake them.
+    recorder.agentEndWaiting(runningChildCount());
     // Auto-exit hinges on whether the last turn completed, not on who started it.
     if (autoExit) userTookOver = false;
   });

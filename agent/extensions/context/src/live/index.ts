@@ -73,7 +73,7 @@ export function registerLiveContext(pi: ExtensionAPI): LiveContextRuntime {
         if (typeof data?.enabled === "boolean") return data.enabled;
       }
     }
-    return mode === "all" || (mode === "main" && !process.env.PI_SUBAGENT_ID && !(Number(process.env.PI_SUBAGENT_DEPTH) > 0));
+    return mode === "all" || (mode === "main" && !process.env.PI_SUBAGENT_ID);
   };
 
   const ensure = (ctx: ExtensionContext): MirrorStorage | undefined => {

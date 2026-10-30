@@ -92,17 +92,17 @@ importers:
 
   tmux:
     dependencies:
-      '@pi-ext/tmux-layout':
+      '@pi-ext/tmux-windows':
         specifier: workspace:*
-        version: link:../tmux-layout
-
-  tmux-layout: {}
+        version: link:../tmux-windows
 
   tmux-subagents:
     dependencies:
-      '@pi-ext/tmux-layout':
+      '@pi-ext/tmux-windows':
         specifier: workspace:*
-        version: link:../tmux-layout
+        version: link:../tmux-windows
+
+  tmux-windows: {}
 
   ttsr: {}
 

@@ -1,153 +1,165 @@
 # tmux-subagents
 
-Async subagents in tmux panes, exposed through one tool: `tmux_subagent`.
+Async subagents in tmux, exposed through one tool: `tmux_subagent`.
 
-Hot-loaded from `~/.pi/agent/extensions/tmux-subagents/index.ts`; `/reload` picks up edits.
+Hot-loaded from `~/.pi/agent/extensions/tmux-subagents/src/index.ts`; `/reload` picks up edits.
+
+## Model
+
+The tmux **session** is the unit of ownership:
+
+```
+tmux server
+├── session "0"                      ← lead (manual pi, no PI_SUBAGENT_ID)
+│   ├── win: pi                      ← yours, untouched
+│   ├── win "Scout: Auth"   @pi_owner=%lead @pi_subagent   (follower)
+│   ├── win "Review"        @pi_owner=%lead @pi_subagent   (follower)
+│   ├── win "Scout: DB"     @pi_owner=%rev  @pi_subagent   (reviewer's child → same session)
+│   └── win "build"         @pi_owner=%lead @pi_name       (`tmux` tool run)
+└── session "0-fix-auth"    @pi_session_owner=%lead        ← `lead: true` child = new lead
+    ├── win: pi (child lead)         ← exits → its script kills the whole session
+    └── win "Scout: X"      @pi_owner=%child-lead
+```
+
+- Every child opens as a detached window (`-d`, focus never moves) in the
+  spawner's own session. A child whose definition has `lead: true` gets a new
+  detached session `<spawner session>-<slug>` (`-<id4>` when taken) instead; it
+  owns that session, and its own runs and children land there.
+- Ownership lives in tmux user options (`@pi-ext/tmux-windows`), so cleanup
+  never depends on memory. Each pi sees and controls only what it created.
+- Lead sessions get `detach-on-destroy previous`: a client viewing one moves to
+  the previous session when it dies. Use `prefix s` / `prefix w` to look in.
 
 ## Flow
 
 ```
 tmux_subagent({ name, task, agent })  → returns immediately ("started")
-child pi runs in its own tmux pane    → widget above the editor shows live state
-you keep working                      → session stays interactive
+launch script runs pi in the window   → widget above the editor shows live state
 child finishes                        → result is steered back, triggering a turn
+script: pi …; echo $? > <session>.status [; tmux kill-session (lead)]
+watcher (1s): .ping → "needs help" steer; .exit → done/error;
+              pane gone → .status (0 = closed, ≠0 = crash code)
 ```
 
 Widget:
 
 ```
-╭─ Subagents ──────────────────────────── 2 running ─╮
-│ 00:23  Scout: Auth (scout)        active · bash 7m │
-│ 00:45  Scout: DB (scout)                waiting 2m │
-╰────────────────────────────────────────────────────╯
+╭─ Subagents ──────────────────────────────────── 2 running ─╮
+│ 00:23  Scout: Auth (scout)                active · bash 7m │
+│ 00:45  Fix auth (delegate) @0-fix-auth          waiting 2m │
+╰────────────────────────────────────────────────────────────╯
 ```
 
-States: `starting`, `active`, `waiting`, `stalled`. They come from an activity
-snapshot the child writes (`activity.ts`), not from session-file growth. Stall
-and recovery transitions steer a note back to the parent, except for
-`interactive` children (the user is driving that pane already).
+States: `starting`, `active`, `waiting`, `stalled`, from an activity snapshot
+the child writes (`activity.ts`). Stall/recovery transitions steer a note to the
+parent, except for `interactive` children.
 
-Panes: layout shared with the `tmux` tool via `@pi-ext/tmux-layout` — one
-full-height column per spawn depth, so a pane is always right of its spawner:
+Ending:
 
-```
-| pi (+ your panes) | depth 1: subagents + tmux panes of pi | depth 2: panes of depth-1 agents |
-```
+- Non-interactive children auto-exit after a completed turn, unless their own
+  subagents/tmux runs are pending or a `caller_ping` awaits a reply.
+- `interactive: true` children never auto-exit. They end via `subagent_done`,
+  the spawner's `stop`, or the user quitting pi in that window/session. If one
+  sits `waiting` ≥ 2 min with nothing pending and no unanswered ping, the
+  spawner gets one note per idle episode.
 
-Each column stacks vertically, rebalanced to equal heights on create/close;
-worker columns share the width right of pi. Columns are ordered by numeric
-`@pi_depth`, even when a shallower column is recreated after its panes close.
-Only tagged panes count as workers. Your own splits retain their split tree
-in the left region; its width stays fixed while workers remain. The first
-worker column shares the window with that region; closing the final worker
-returns the full window to it.
+Cascade on the spawner's `session_shutdown` (found by tags, so children
+orphaned by an earlier `/reload` are included):
 
-Live pane depth determines the next column, with `PI_SUBAGENT_DEPTH` as a
-fallback. Launches and resumes both propagate this depth (layout only; there
-is no nesting cap). Layout changes are serialized across pi processes in one window.
+| reason | subagent windows | child lead sessions |
+| --- | --- | --- |
+| quit (incl. SIGHUP from a killed lead session) | kill | kill |
+| new / resume / fork | kill | kill |
+| reload | keep | keep |
 
-Nested delegation: an auto-exit child does not exit while it still has running
-subagents or pending tmux panes (exiting would kill them). Every tmux command
-closes its pane on completion and delivers a snapshot path in the session folder.
-Results steer back, trigger a turn, and the child exits after that turn.
-`subagent_done` refuses for the same reason.
+Killing a lead session SIGHUPs its pi → graceful quit → it cascades its own
+children. `/reload` hands live children to the new module (globalThis), which
+re-watches them: results, pings, `status`, `send` and `stop` keep working.
 
 ## Actions
 
 | Call | Effect |
 | --- | --- |
-| `{ name, task, agent? }` | Launch (default action). Fire-and-forget. |
-| `{ action: "list" }` | Agent definitions found on disk |
-| `{ action: "status" }` | Running children, state and elapsed |
+| `{ name, task, agent }` | Launch (default action). Fire-and-forget. |
+| `{ action: "list" }` | Agent definitions this role may launch |
+| `{ action: "status" }` | Running children, state, elapsed, lead session |
 | `{ action: "send", id, message }` | Deliver a follow-up prompt to a live child |
 | `{ action: "interrupt", id }` | Escape the child's current turn; session stays alive |
-| `{ action: "stop", id }` | Kill the child pane, return its last output |
-| `{ action: "resume", sessionPath, message? }` | Restart a previous child session with its original role |
+| `{ action: "stop", id }` | Kill the child (lead: its whole session), return its last output |
+| `{ action: "resume", sessionPath, name?, message? }` | Restart a child session with its original role |
 
-Launch parameters: `name`, `task`, `agent`, `tools`, `skills`,
-`systemPrompt`, `cwd`, `fork`, `interactive`. No model override: the child
-uses the agent definition's `model`/`thinking`, else the parent's.
-
-Commands: `/subagent <agent> <task>`, `/iterate <task>` (forks this session into a pane).
+Params: `action, name, task, agent, cwd, id, message, sessionPath`. No model or
+tools override: the definition decides (model, else the parent's).
 
 ## Child-side tools
 
 Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
 - `subagent_done({ message? })` — finish; `message` is the summary, else the
-  last assistant text.
-- `caller_ping({ message })` — ask the parent for help. The child stays alive:
-  it writes a `.ping` sidecar, ends its turn, and does not auto-exit. The parent
-  gets a "needs help" steer naming the child id and answers with
-  `{ action: "send", id, message }`; that input clears the wait and the child
-  continues. Auto-exit children are told that ending a turn ends the run, so
-  progress/coordination notes go to files, not end-of-turn messages. Children
-  waiting on their own tmux panes/subagents must not ping: they stay alive
-  until those results arrive.
-- Ctrl+J toggles the child's identity/tools widget.
+  last assistant text. Refused while own children/runs are pending.
+- `caller_ping({ message })` — ask the parent for help. The child stays alive
+  (`.ping` sidecar); the parent answers with `{ action: "send", id, message }`.
+- Ctrl+Alt+J toggles the child's identity/tools widget.
 
-A `tools` allowlist (param or frontmatter) is passed as `--tools`, which replaces
-the default selection; `subagent_done`, `caller_ping`, and pi's built-in
-`codemode` are always added, so every child can run codemode scripts using its
-allowed tools. The allowlist also restricts tools callable through codemode;
-MCP tools are unavailable unless explicitly named. Without an allowlist,
-children use `defaultTools` from settings. On session start (including reload
-and resume), `child.ts` activates codemode without changing the other active
-tools, even if project defaults omit it or disable the built-in extension.
+A `tools` allowlist is passed as `--tools`; `subagent_done`, `caller_ping` and
+`codemode` are always added. Without one, children use `defaultTools`.
 
-Every task prompt (launch and fork) starts with `Current date: YYYY-MM-DD (Weekday)`.
+Every task prompt starts with `Current date: YYYY-MM-DD (Weekday)`.
 
-## Bundled agents
+## Agent definitions
 
-| Agent | Model | Role |
-| --- | --- | --- |
-| `scout` | `openai-codex/gpt-6-luna:high` | Read-only evidence gathering; may `write` reports under `/tmp` / `/var/tmp` only |
-| `delegate` | `openai-codex/gpt-6.1-sol:high` | General helper; no `tools` allowlist, so MCP tools (agent-browser, …) stay reachable; `ask`/`goal` denied |
-| `researcher` | `openai-codex/gpt-6-luna:high` | External web research → sourced brief; can `read` handoff files |
-| `reviewer` | `openai-codex/gpt-6.1-sol:high` | Read-only code review → evidence-backed findings |
+Only bundled `agents/*.md` are read. Frontmatter is the only policy source;
+code holds no agent names.
 
-Precedence: `.pi/agents/` (project) > `~/.pi/agent/agents/` (global) > bundled.
+| Key | Meaning |
+| --- | --- |
+| `name`, `description` | identity |
+| `model`, `thinking` | fixed model for the role |
+| `tools` | allowlist (`--tools`) |
+| `deny-tools` | `--exclude-tools` + `PI_DENY_TOOLS` |
+| `system-prompt` | `append` / `replace`: body goes to the system prompt, else into the task |
+| `spawning: false` | deny `tmux_subagent` |
+| `spawns: a, b` | may launch/resume only these (`PI_SUBAGENT_SPAWNS`); omitted = anything |
+| `lead: true` | child gets its own tmux session |
+| `interactive: true` | no auto-exit (see Ending) |
 
-Frontmatter: `name`, `description`, `model`, `thinking`, `tools`, `skills`,
-`system-prompt` (`append`/`replace`), `session-mode`
-(`standalone`/`lineage-only`/`fork`), `auto-exit`, `interactive`, `spawning`,
-`spawns`, `deny-tools`, `cwd`, `disable-model-invocation`.
+Bundled behavior that results:
 
-`deny-tools` (plus `tmux_subagent` when `spawning: false`) is passed as
-`--exclude-tools` and `PI_DENY_TOOLS`, so the child cannot call those tools.
-Use it instead of `tools` when a role must keep MCP tools: allowlists match
-exact names only, so MCP tools are unreachable unless listed one by one.
+| Agent | Model | lead / interactive | May launch |
+| --- | --- | --- | --- |
+| `delegate` | `gpt-6.1-sol:high` | yes / yes | anything (`ask`, `goal` denied, inherited) |
+| `reviewer` | `gpt-6.1-sol:high` | no / no | `scout`, `researcher` |
+| `researcher` | `gpt-6-luna:high` | no / no | nothing |
+| `scout` | `gpt-6-luna:high` | no / no | nothing |
 
-Policy (`policy.ts`), enforced at any depth:
+Policy (`policy.ts`), at any depth:
 
-- Denies accumulate: child denies = its role's denies ∪ the launcher's `PI_DENY_TOOLS`.
-  A descendant never regains a tool an ancestor lost.
-- A launch `tools` override only narrows a role's `tools` allowlist; it never widens it.
-- `spawns: a, b` limits which agents the role may launch or resume (`PI_SUBAGENT_SPAWNS`).
-  Omitted = unrestricted. Agent-less launches are refused under a `spawns` list.
-- Each launch writes `<session>.launch.json` (agent, model, system prompt, tools,
-  denies, spawns, auto-exit, cwd). Resume rebuilds the child from it and merges the
-  resumer's denies. Sessions without the file resume role-less, still under those denies.
-- No depth cap and no same-role block: a delegate may start delegates.
+- Denies accumulate: child denies = role denies ∪ launcher's `PI_DENY_TOOLS`.
+- Each launch writes `<session>.launch.json` (v2: agent, model, prompt, tools,
+  denies, spawns, lead, interactive, cwd). Resume rebuilds from it and merges
+  the resumer's denies; sessions without a v2 file are refused.
 
 ## Env
 
 | Var | Meaning |
 | --- | --- |
-| `PI_SUBAGENT_SHELL_READY_DELAY_MS` | Wait before sending the launch command (default 500) |
-| `PI_CODING_AGENT_DIR` | Propagated to children; `cwd/.pi/agent` wins when present |
+| `PI_SUBAGENT_ID`, `_NAME`, `_AGENT`, `_SESSION`, `_ACTIVITY_FILE` | set for every child |
+| `PI_SUBAGENT_INTERACTIVE=1` | interactive child (no auto-exit) |
+| `PI_SUBAGENT_SPAWNS`, `PI_DENY_TOOLS` | policy, see above |
+| `PI_CODING_AGENT_DIR` | propagated; `cwd/.pi/agent` wins when present |
 
 ## Files
 
 ```
-index.ts     parent extension: tool, widget, watcher, renderers
-child.ts     child extension: subagent_done, caller_ping, activity recorder
-tmux.ts      pane primitives + exit polling
-activity.ts  child activity snapshot (write/read/validate)
-status.ts    snapshot → status kind, transitions, status lines
-session.ts   child session seeding, summary extraction
-policy.ts    deny inheritance, tools narrowing, spawns gate, launch spec sidecar
-agents/      scout, delegate, researcher, reviewer
+src/index.ts     parent extension: tool, widget, watcher, cascade, renderers
+src/child.ts     child extension: subagent_done, caller_ping, auto-exit, activity recorder
+src/tmux.ts      pane I/O + sidecar polling (.exit/.ping/.status)
+src/activity.ts  child activity snapshot (write/read/validate)
+src/status.ts    snapshot → status kind, transitions, idle note rule
+src/session.ts   summary extraction
+src/policy.ts    deny inheritance, spawns gate, launch spec sidecar
+agents/          bundled definitions
 ```
 
-Checks from the extensions workspace: `pnpm --filter pi-tmux-subagents test` and `pnpm check`.
+Checks from the extensions workspace: `pnpm --filter pi-tmux-subagents test`
+(unit + e2e on an isolated tmux server with a stub `pi`) and `pnpm check`.

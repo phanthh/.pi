@@ -3,12 +3,12 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test": "node --test src/child.test.ts src/policy.test.ts"
+		"test": "node --test src/child.test.ts src/policy.test.ts src/agents.test.ts src/e2e.test.ts"
 	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@pi-ext/tmux-layout": "workspace:*"
+		"@pi-ext/tmux-windows": "workspace:*"
 	}
 }

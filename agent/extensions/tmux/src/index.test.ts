@@ -9,24 +9,35 @@ import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earend
 
 interface TestPane {
 	name: string;
+	owner: string;
 	content: string;
 	outputPath?: string;
 	shellCommand?: string;
+	/** Quit closes windows without a snapshot. */
+	noSnapshot?: boolean;
 }
 const panes = new Map<string, TestPane>();
 const closed: string[] = [];
 let nextPaneId = 1;
-mock.module("@pi-ext/tmux-layout", {
+mock.module("@pi-ext/tmux-windows", {
 	namedExports: {
-		createWorkerPane: ({ title, command }: { title: string; command: string }) => {
+		createWindow: ({ name, tag, command }: { name: string; tag: { key: string; value: string }; command: string }) => {
+			assert.deepEqual(tag, { key: "@pi_name", value: name });
 			const id = `%${nextPaneId++}`;
-			panes.set(id, { name: title, content: "initial output\n", shellCommand: command });
+			panes.set(id, { name, owner: process.env.TMUX_PANE!, content: "initial output\n", shellCommand: command });
 			return id;
 		},
 		isPaneAlive: (id: string) => panes.has(id),
-		closeWorkerPane: (id: string) => {
+		userShell: () => "/bin/sh",
+		viaUserShell: (inner: string) => `exec /bin/sh -ic '${inner}'`,
+		ownedWindows: (key: string) => {
+			assert.equal(key, "@pi_name");
+			return [...panes].filter(([, p]) => p.owner === process.env.TMUX_PANE)
+				.map(([paneId, p]) => ({ paneId, windowId: "@1", tag: p.name, command: "bash" }));
+		},
+		closeWindow: (id: string) => {
 			const pane = panes.get(id)!;
-			assert.equal(readFileSync(pane.outputPath!, "utf8"), pane.content.replace(/\n+$/, "\n"));
+			if (!pane.noSnapshot) assert.equal(readFileSync(pane.outputPath!, "utf8"), pane.content.replace(/\n+$/, "\n"));
 			closed.push(id);
 			panes.delete(id);
 		},
@@ -43,26 +54,30 @@ async function harness(t: TestContext) {
 	t.after(() => rm(dir, { recursive: true, force: true }));
 	const oldTmux = process.env.TMUX;
 	const oldHerdr = process.env.HERDR_ENV;
+	const oldPane = process.env.TMUX_PANE;
 	process.env.TMUX = "test";
+	process.env.TMUX_PANE = "%0";
 	delete process.env.HERDR_ENV;
 	t.after(() => {
 		if (oldTmux === undefined) delete process.env.TMUX;
 		else process.env.TMUX = oldTmux;
 		if (oldHerdr !== undefined) process.env.HERDR_ENV = oldHerdr;
+		if (oldPane === undefined) delete process.env.TMUX_PANE;
+		else process.env.TMUX_PANE = oldPane;
 		panes.clear();
 	});
 	const g = globalThis as any;
-	clearInterval(g[Symbol.for("pi-tmux/state")]?.sweep);
-	delete g[Symbol.for("pi-tmux/state")];
+	clearInterval(g[Symbol.for("pi-tmux/state-v2")]?.sweep);
+	delete g[Symbol.for("pi-tmux/state-v2")];
 	let tool!: ToolDefinition;
-	let start!: () => Promise<void>;
+	let shutdown!: (event: { reason: string }) => void;
 	const waiting = new Map<string, (result: typeof success) => void>();
 	const messages: Array<{ content: string; details: Record<string, any> }> = [];
 	let onMessage: (() => void) | undefined;
 	let captureFails = false;
 	let generation = 0;
 	const makePi = (gen = ++generation) => ({
-		on(name: string, handler: () => Promise<void>) { if (name === "session_start") start = handler; },
+		on(name: string, handler: any) { if (name === "session_shutdown") shutdown = handler; },
 		registerTool(value: ToolDefinition) { tool = value; },
 		registerMessageRenderer() {},
 		sendMessage(message: (typeof messages)[number], options: { triggerTurn: boolean; deliverAs: string }) {
@@ -74,11 +89,6 @@ async function harness(t: TestContext) {
 		async exec(_command: string, args: string[]) {
 			if (gen !== generation) throw new Error("stale extension ctx");
 			switch (args[0]) {
-				case "display-message": return { ...success, stdout: "%0\t@0\t$0\n" };
-				case "list-panes": return {
-					...success,
-					stdout: [...panes].map(([id, pane]) => `${id}\t${pane.name}\tbash\t123\t0`).join("\n"),
-				};
 				case "capture-pane": {
 					assert.ok(args.includes("-J"));
 					assert.equal(args.at(-1), "-");
@@ -98,8 +108,7 @@ async function harness(t: TestContext) {
 	async function load() {
 		extension(makePi() as unknown as ExtensionAPI);
 		// Tests drive the fallback sweep explicitly.
-		clearInterval(g[Symbol.for("pi-tmux/state")].sweep);
-		await start();
+		clearInterval(g[Symbol.for("pi-tmux/state-v2")].sweep);
 	}
 	await load();
 	const ctx = { sessionManager: { getSessionDir: () => sessionDir } } as unknown as ExtensionToolContext;
@@ -123,8 +132,8 @@ async function harness(t: TestContext) {
 		waiting.get(channel)!(success);
 		await pending;
 	}
-	const sweep = () => g[Symbol.for("pi-tmux/state")].sweepNow();
-	return { run, call, complete, load, sweep, messages, tool, sessionDir, failCapture(fail = true) { captureFails = fail; } };
+	const sweep = () => g[Symbol.for("pi-tmux/state-v2")].sweepNow();
+	return { run, call, complete, load, sweep, messages, tool, sessionDir, shutdown: (reason: string) => shutdown({ reason }), failCapture(fail = true) { captureFails = fail; } };
 }
 
 test("every run closes after saving full snapshot and delivers only its path", { timeout: 5000 }, async (t) => {
@@ -303,4 +312,32 @@ test("runner accepts a command ending in a heredoc without a trailing newline", 
 	const { stdout } = await exec("bash", ["-c", `tmux() { :; }; export -f tmux\nbash ${JSON.stringify(script)}`]);
 	assert.equal(stdout, "hello heredoc\n");
 	await h.complete(run.paneId, 0);
+});
+
+test("windows are scoped to their owner pane", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const mine = await h.run("sleep 60");
+	process.env.TMUX_PANE = "%other";
+	await assert.rejects(h.call({ action: "read", pane: "job" }), /not found/);
+	const theirs = await h.run("sleep 60");
+	assert.notEqual(theirs.paneId, mine.paneId, "same name under another owner is a separate window");
+	process.env.TMUX_PANE = "%0";
+	const listed = await h.call({ action: "list" });
+	assert.deepEqual((listed.details as any).panes.map((p: any) => p.paneId), [mine.paneId]);
+	await h.call({ action: "stop", pane: "job" });
+	assert.ok(panes.has(theirs.paneId), "other owner's window untouched");
+});
+
+test("quit closes own run windows; reload/new keep them", { timeout: 5000 }, async (t) => {
+	const h = await harness(t);
+	const run = await h.run("sleep 60");
+	process.env.TMUX_PANE = "%other";
+	const foreign = await h.run("sleep 60");
+	process.env.TMUX_PANE = "%0";
+	for (const reason of ["reload", "new", "resume", "fork"]) h.shutdown(reason);
+	assert.ok(panes.has(run.paneId));
+	panes.get(run.paneId)!.noSnapshot = true;
+	h.shutdown("quit");
+	assert.ok(!panes.has(run.paneId));
+	assert.ok(panes.has(foreign.paneId));
 });
