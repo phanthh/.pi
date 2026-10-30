@@ -3,7 +3,7 @@ name: reviewer
 description: Critical code reviewer; evidence-backed findings, writes only handoff and report documents
 model: openai-codex/gpt-6.1-sol
 thinking: high
-tools: read, bash, write, lsp, codemode, tmux_subagent
+tools: read, bash, write, lsp, codemode, tmux_subagent, tmux
 system-prompt: replace
 spawning: true
 spawns: scout, researcher
