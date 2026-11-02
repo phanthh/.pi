@@ -3,7 +3,8 @@
  *
  * - Writes the activity snapshot the parent widget reads (liveness).
  * - `subagent_done` — self-terminate and hand the last assistant message back.
- * - `caller_ping` — ask the parent for help; session stays alive until the reply arrives.
+ * - `caller_ping` — ask the parent for help (room message); session stays alive until the reply arrives.
+ * - Delivers room messages (PI_ROOM inbox) into the session.
  * - Identity/tools widget above the editor (Ctrl+J toggles).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -11,6 +12,10 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { writeFileSync } from "node:fs";
 import { Type } from "typebox";
 import { createSubagentActivityRecorder } from "./activity.ts";
+import { drainInbox, formatRoomMessage, HOST, postMessage } from "./room.ts";
+
+const INBOX_INTERVAL_KEY = Symbol.for("pi-tmux-subagents/child-inbox-interval");
+
 
 export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
   return agentStarted;
@@ -28,7 +33,7 @@ export function shouldAutoExitOnAgentEnd(
   runningChildren = 0,
   awaitingReply = false,
 ): boolean {
-  // A caller_ping is a question, not a result: wait for the parent's `send`.
+  // A caller_ping is a question, not a result: wait for the parent's reply.
   if (awaitingReply) return false;
   // Exiting would abort our own children's watchers and kill their panes;
   // their results steer back in and trigger the turn that ends us.
@@ -156,7 +161,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("input", () => {
     recorder.input();
-    // Any new input (normally the parent's `send`) answers a pending ping.
+    // Typed input (the user in the child's pane) also answers a pending ping.
     if (agentStarted) awaitingReply = false;
     // The initial task message is not a takeover; only inputs after the first run are.
     if (!shouldMarkUserTookOver(agentStarted)) return;
@@ -214,7 +219,29 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_execution_end", (event) =>
     recorder.toolExecutionEnd((event as any).toolCallId, (event as any).toolName),
   );
-  pi.on("session_shutdown", (event) => recorder.sessionShutdown((event as any).reason));
+  pi.on("session_shutdown", (event) => {
+    clearInterval((globalThis as any)[INBOX_INTERVAL_KEY]);
+    recorder.sessionShutdown((event as any).reason);
+  });
+
+  // Messages from the parent and siblings; a parent message also answers a caller_ping.
+  const room = process.env.PI_ROOM;
+  const g = globalThis as any;
+  clearInterval(g[INBOX_INTERVAL_KEY]);
+  if (room && subagentName) {
+    g[INBOX_INTERVAL_KEY] = setInterval(() => {
+      try {
+        drainInbox(room, subagentName, (message) => {
+          if (message.from === HOST) awaitingReply = false;
+          pi.sendMessage(
+            { customType: "room_message", content: formatRoomMessage(message), display: true, details: message },
+            { triggerTurn: true, deliverAs: "steer" },
+          );
+        });
+      } catch {}
+    }, 1000);
+    g[INBOX_INTERVAL_KEY].unref?.();
+  }
 
   pi.registerShortcut("ctrl+alt+j", {
     description: "Toggle subagent tools widget",
@@ -230,27 +257,21 @@ export default function (pi: ExtensionAPI) {
     description:
       "Ask the parent agent for help or a decision. This session stays alive: after calling, end your turn; " +
       "the parent's reply arrives as your next message and you continue the task. " +
-      "Use only when blocked and the parent must act or decide. Not for progress updates or FYIs. " +
+      "Use only when blocked and the parent must act or decide. Not for progress updates or FYIs; " +
+      "to tell the parent something without stopping, use the room tool. " +
       "Never ping to say you are waiting on your own tmux panes/subagents: just end your turn; you stay alive and their results wake you.",
     parameters: Type.Object({
       message: Type.String({ description: "What you need help with" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const sessionFile = process.env.PI_SUBAGENT_SESSION;
-      if (!sessionFile) {
-        throw new Error("caller_ping is only available in subagent contexts (PI_SUBAGENT_SESSION unset).");
+      const room = process.env.PI_ROOM;
+      if (!room || !subagentName) {
+        throw new Error("caller_ping is only available in subagent contexts (PI_ROOM unset).");
       }
       awaitingReply = true;
       recorder.callerPing();
-      // `.ping` (not `.exit`): the parent keeps watching and answers with `send`.
-      writeFileSync(
-        `${sessionFile}.ping`,
-        JSON.stringify({
-          type: "ping",
-          name: process.env.PI_SUBAGENT_NAME ?? "subagent",
-          message: params.message,
-        }),
-      );
+      // A room message, not `.exit`: the parent keeps watching and answers through the room.
+      postMessage(room, { from: subagentName, to: HOST, body: params.message, ts: Date.now(), ping: true });
       return {
         content: [
           {
@@ -284,3 +305,4 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+

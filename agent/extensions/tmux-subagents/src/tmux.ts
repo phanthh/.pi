@@ -1,7 +1,7 @@
 /**
  * tmux + sidecar primitives for subagents. Windows/sessions themselves come
  * from @pi-ext/tmux-windows; here only pane I/O by pane id (works across
- * sessions) and the exit/ping/status sidecar polling.
+ * sessions) and the exit/status sidecar polling.
  */
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
@@ -40,31 +40,14 @@ export function sendEscape(surface: string): void {
   tmux(["send-keys", "-t", surface, "Escape"]);
 }
 
-/**
- * Paste text into a pane and submit it (used to talk to a live child pi session).
- * Buffer arrives over stdin so the tmux server never needs to see a file path.
- * -p wraps the paste in bracketed-paste markers (pi enables mode 2004), so
- * embedded newlines stay in the editor instead of acting as Enter and
- * submitting only the first line.
- */
-export function sendText(surface: string, text: string): void {
-  execFileSync("tmux", ["load-buffer", "-b", "pi-subagent", "-"], { input: text, encoding: "utf8" });
-  tmux(["paste-buffer", "-p", "-d", "-b", "pi-subagent", "-t", surface]);
-  tmux(["send-keys", "-t", surface, "Enter"]);
-}
-
 export interface PollResult {
-  reason: "done" | "ping" | "error" | "closed";
+  reason: "done" | "error" | "closed";
   exitCode: number;
-  ping?: { name: string; message: string };
   errorMessage?: string;
 }
 
 /** Decode the `.exit` sidecar written by subagent_done / the child error path. */
 export function interpretExitSidecar(data: any): PollResult {
-  if (data?.type === "ping") {
-    return { reason: "ping", exitCode: 0, ping: { name: data.name, message: data.message } };
-  }
   if (data?.type === "error") {
     const errorMessage =
       typeof data.errorMessage === "string" && data.errorMessage.trim() !== ""
@@ -82,19 +65,6 @@ function readExitSidecar(sessionFile: string): PollResult | null {
     const data = JSON.parse(readFileSync(exitFile, "utf8"));
     rmSync(exitFile, { force: true });
     return interpretExitSidecar(data);
-  } catch {
-    return null;
-  }
-}
-
-/** Non-terminal `.ping` sidecar from caller_ping; consumed once. */
-function readPingSidecar(sessionFile: string): { name: string; message: string } | null {
-  try {
-    const pingFile = `${sessionFile}.ping`;
-    if (!existsSync(pingFile)) return null;
-    const data = JSON.parse(readFileSync(pingFile, "utf8"));
-    rmSync(pingFile, { force: true });
-    return { name: String(data?.name ?? "subagent"), message: String(data?.message ?? "") };
   } catch {
     return null;
   }
@@ -123,14 +93,10 @@ export async function pollForExit(
     interval: number;
     sessionFile: string;
     onTick?: () => void;
-    onPing?: (ping: { name: string; message: string }) => void;
   },
 ): Promise<PollResult> {
   for (;;) {
     if (signal.aborted) throw new Error("Aborted while waiting for subagent to finish");
-
-    const ping = readPingSidecar(options.sessionFile);
-    if (ping) options.onPing?.(ping);
 
     const sidecar = readExitSidecar(options.sessionFile);
     if (sidecar) return sidecar;

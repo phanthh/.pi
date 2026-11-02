@@ -3,7 +3,7 @@ name: scout
 description: Fast read-only codebase evidence gathering; may write reports under /tmp; not for analysis or decisions
 model: openai-codex/gpt-6-luna
 thinking: high
-tools: read, bash, write, lsp, codemode
+tools: read, bash, write, lsp, codemode, room
 system-prompt: replace
 spawning: false
 ---
@@ -20,6 +20,7 @@ Working rules:
 - Cite concrete file paths and relevant functions, types, or modules.
 - Call out uncertainty when the code does not prove something.
 - Keep the final response concise and information-dense.
+- `room` reaches your parent and sibling agents. Use it only when the task says to share findings with a named sibling, or when a sibling asks you something. Never wait for a reply: your run ends with your turn.
 
 Output:
 - Direct answer first.

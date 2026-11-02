@@ -2,7 +2,7 @@
 // The stub picks its behavior from `STUB_MODE=<mode>` in its @task/@message file.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -25,7 +25,9 @@ case "$mode" in
   quit) say "quit text"; exit 0 ;;
   crash) exit 3 ;;
   gate) while [ ! -e "$session.go" ]; do sleep 0.1; done; say "after reload $PI_SUBAGENT_NAME"; echo '{"type":"done"}' > "$session.exit"; exit 0 ;;
-  ping) echo '{"type":"ping","name":"'"$PI_SUBAGENT_NAME"'","message":"which db?"}' > "$session.ping"; exec sleep 600 ;;
+  room) mkdir -p "$PI_ROOM/inbox/parent"; printf '{"from":"%s","to":"parent","body":"found it","ts":1}' "$PI_SUBAGENT_NAME" > "$PI_ROOM/inbox/parent/1.json"; say "room done"; echo '{"type":"done"}' > "$session.exit"; exit 0 ;;
+  live) echo "room=$PI_ROOM"; while :; do sleep 0.2; done ;;
+  ping) mkdir -p "$PI_ROOM/inbox/parent"; printf '{"from":"%s","to":"parent","body":"which db?","ts":1,"ping":true}' "$PI_SUBAGENT_NAME" > "$PI_ROOM/inbox/parent/1.json"; exec sleep 600 ;;
   *) exec sleep 600 ;;
 esac
 `;
@@ -39,6 +41,7 @@ const paneAlive = (p: string) => tmux("list-panes", "-a", "-F", "#{pane_id}").sp
 let rootPane = "";
 let ext: typeof import("./index.ts");
 let tool: any;
+const tools = new Map<string, any>();
 const handlers = new Map<string, Function>();
 const messages: Array<{ customType: string; content: string; details: any }> = [];
 const sessionDir = join(root, "parent-sessions");
@@ -55,7 +58,7 @@ const ctx = {
 function fakePi(): ExtensionAPI {
   return {
     on: (event: string, h: Function) => handlers.set(event, h),
-    registerTool: (t: any) => { tool = t; },
+    registerTool: (t: any) => { tools.set(t.name, t); if (t.name === "tmux_subagent") tool = t; },
     registerMessageRenderer: () => {},
     sendMessage: (m: any) => messages.push(m),
   } as unknown as ExtensionAPI;
@@ -128,7 +131,9 @@ test("lead done: new session named after spawner, owner + detach option, gone af
   assert.equal(fmt("=root-fix-auth:", "#{@pi_session_owner}"), rootPane);
   assert.equal(fmt("=root-fix-auth:", "#{detach-on-destroy}"), "previous");
   // Collision → suffix.
-  const r2 = await call({ name: "Fix Auth", agent: "delegate", task: "STUB_MODE=done" });
+  const dup = await call({ name: "Fix Auth", agent: "delegate", task: "STUB_MODE=done" });
+  assert.match(text(dup), /already named "Fix Auth"/, "names are room addresses");
+  const r2 = await call({ name: "fix auth", agent: "delegate", task: "STUB_MODE=done" });
   assert.match(r2.details.tmuxSession, /^root-fix-auth-[0-9a-f]{4}$/);
   const m = await nextMessage((x) => x.customType === "subagent_result" && x.details.sessionFile === r2.details.sessionFile, "lead result");
   assert.match(m.content, /completed/);
@@ -146,14 +151,40 @@ test("crash reports exit code; plain quit reports closed with last text", async 
   assert.match(m.content, /completed[\s\S]*quit text/);
 });
 
-test("ping steers needs-help; send types into the child", async () => {
+test("ping arrives through the room; the reply lands in the child's inbox; send action is gone", async () => {
   const r = await call({ name: "Pinger", agent: "delegate", task: "STUB_MODE=ping" });
   const ping = await nextMessage((m) => m.customType === "subagent_ping" && m.details.id === r.details.id, "ping");
-  assert.match(ping.content, /needs help[\s\S]*which db\?/);
-  await call({ action: "send", id: r.details.id, message: "use postgres" });
-  const pane = fmt(`=${r.details.tmuxSession}:`, "#{pane_id}");
-  await waitFor(() => tmux("capture-pane", "-p", "-t", pane).includes("use postgres"), "sent text visible");
+  assert.match(ping.content, /"Pinger" needs help[\s\S]*which db\?[\s\S]*room\(\{ action: "send", to: "Pinger"/);
+  const sent = await tools.get("room").execute("t", { action: "send", to: "Pinger", message: "use postgres" });
+  assert.match(text(sent), /Queued for Pinger/);
+  const inbox = join(root, "agent", "rooms", "parent", "inbox", "Pinger");
+  const [file] = readdirSync(inbox);
+  assert.match(readFileSync(join(inbox, file), "utf8"), /"from":"parent".*"body":"use postgres"/);
+  assert.match(text(await tools.get("room").execute("t", { action: "members" })), /Your children:[\s\S]*Pinger \[delegate\] — running/);
+  await assert.rejects(tools.get("room").execute("t", { action: "send", to: "parent", message: "x" }), /no parent/);
+  const gone = await call({ action: "send", id: r.details.id, message: "x" });
+  assert.equal(gone.isError, true);
   await call({ action: "stop", id: r.details.id });
+});
+
+test("room: child gets PI_ROOM, its message steers to host, status lists finished; live resume refused", async () => {
+  const r = await call({ name: "Roomy", agent: "scout", task: "STUB_MODE=room" });
+  const msg = await nextMessage((m) => m.customType === "room_message" && m.details.from === "Roomy", "room message");
+  assert.match(msg.content, /found it/);
+  await resultFor("Roomy");
+  const status = text(await call({ action: "status" }));
+  assert.match(status, /Finished[\s\S]*Roomy \(scout\) — done: room done/);
+
+  const live = await call({ name: "Live", agent: "delegate", task: "STUB_MODE=live" });
+  const pane = fmt(`=${live.details.tmuxSession}:`, "#{pane_id}");
+  await waitFor(() => tmux("capture-pane", "-p", "-t", pane).includes("room="), "room env");
+  assert.match(tmux("capture-pane", "-p", "-t", pane), new RegExp(`room=${join(root, "agent", "rooms", "parent")}`));
+  writeFileSync(live.details.sessionFile, "");
+  const refused = await call({ action: "resume", sessionPath: live.details.sessionFile });
+  assert.equal(refused.isError, true);
+  assert.match(text(refused), /already open in live process[\s\S]*room tool instead/);
+  await call({ action: "stop", id: live.details.id });
+  assert.ok(r.details.id);
 });
 
 test("spawns list refuses before creating anything", async () => {

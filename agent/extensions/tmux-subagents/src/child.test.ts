@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import childExtension, { pendingChildrenError } from "./child.ts";
 import { buildChildToolAllowlist } from "./index.ts";
+import { drainInbox, HOST, postMessage, type RoomMessage } from "./room.ts";
 import { findLastAssistantMessage, type SessionEntry } from "./session.ts";
 
 test("every bundled role and explicit override retains codemode and child controls", () => {
@@ -19,7 +20,7 @@ test("every bundled role and explicit override retains codemode and child contro
   for (const tools of [...roleTools, "read", "read, codemode, read"]) {
     assert.ok(tools);
     const actual = buildChildToolAllowlist(tools)!.split(",");
-    const expected = new Set([...tools.split(",").map((name) => name.trim()), "caller_ping", "subagent_done", "codemode"]);
+    const expected = new Set([...tools.split(",").map((name) => name.trim()), "caller_ping", "subagent_done", "room", "codemode"]);
     assert.deepEqual(new Set(actual), expected);
     assert.equal(actual.length, expected.size);
   }
@@ -63,9 +64,18 @@ test("child startup restores codemode without widening other role permissions", 
 test("caller_ping keeps a non-interactive child alive until the parent's reply arrives", async () => {
   const dir = mkdtempSync(join(tmpdir(), "caller-ping-"));
   const sessionFile = join(dir, "child.jsonl");
-  const saved = { session: process.env.PI_SUBAGENT_SESSION, interactive: process.env.PI_SUBAGENT_INTERACTIVE };
+  const room = join(dir, "room");
+  const saved = {
+    PI_SUBAGENT_SESSION: process.env.PI_SUBAGENT_SESSION,
+    PI_SUBAGENT_INTERACTIVE: process.env.PI_SUBAGENT_INTERACTIVE,
+    PI_ROOM: process.env.PI_ROOM,
+    PI_SUBAGENT_NAME: process.env.PI_SUBAGENT_NAME,
+  };
   process.env.PI_SUBAGENT_SESSION = sessionFile;
+  process.env.PI_ROOM = room;
+  process.env.PI_SUBAGENT_NAME = "kid";
   delete process.env.PI_SUBAGENT_INTERACTIVE;
+  const delivered: any[] = [];
   try {
     const handlers = new Map<string, Function>();
     const tools = new Map<string, any>();
@@ -73,6 +83,7 @@ test("caller_ping keeps a non-interactive child alive until the parent's reply a
       on: (event: string, handler: Function) => { handlers.set(event, handler); },
       registerTool: (tool: any) => { tools.set(tool.name, tool); },
       registerShortcut: () => {},
+      sendMessage: (m: any) => delivered.push(m),
     } as unknown as ExtensionAPI;
     childExtension(pi);
     let shutdowns = 0;
@@ -84,20 +95,23 @@ test("caller_ping keeps a non-interactive child alive until the parent's reply a
     const result = await tools.get("caller_ping").execute("c", { message: "which DB?" }, undefined, undefined, ctx);
     assert.equal(result.terminate, true);
     assert.equal(existsSync(`${sessionFile}.exit`), false);
-    assert.deepEqual(JSON.parse(readFileSync(`${sessionFile}.ping`, "utf8")), {
-      type: "ping",
-      name: process.env.PI_SUBAGENT_NAME ?? "subagent",
-      message: "which DB?",
-    });
+    const pings: RoomMessage[] = [];
+    drainInbox(room, HOST, (m) => pings.push(m));
+    assert.deepEqual(pings.map((m) => [m.from, m.body, m.ping]), [["kid", "which DB?", true]]);
     handlers.get("agent_end")!(done, ctx);
     assert.equal(shutdowns, 0, "ping must not end the run");
 
-    handlers.get("input")!({}); // parent's `send`
+    // Parent's reply through the room clears the wait (inbox polled every 1s).
+    postMessage(room, { from: HOST, to: "kid", body: "postgres", ts: Date.now() });
+    const end = Date.now() + 3000;
+    while (!delivered.length && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+    assert.match(delivered[0]?.content ?? "", /Message from "parent" to you:\n\npostgres/);
     handlers.get("agent_start")!({});
     handlers.get("agent_end")!(done, ctx);
     assert.equal(shutdowns, 1, "run ends normally after the reply turn");
   } finally {
-    for (const [key, value] of [["PI_SUBAGENT_SESSION", saved.session], ["PI_SUBAGENT_INTERACTIVE", saved.interactive]] as const) {
+    clearInterval((globalThis as any)[Symbol.for("pi-tmux-subagents/child-inbox-interval")]);
+    for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }

@@ -3,7 +3,7 @@ name: researcher
 description: External web research; produces a focused, well-sourced brief
 model: openai-codex/gpt-6-luna
 thinking: high
-tools: read, web_search, web_fetch, write, codemode
+tools: read, web_search, web_fetch, write, codemode, room
 system-prompt: replace
 spawning: false
 ---
@@ -36,6 +36,7 @@ If the first round of searches doesn't fully answer the question, search again w
 Working rules:
 - Treat the task as read-only. `read` is for referenced handoff/context files; do not modify project files; `write` is only for scratch notes under `/tmp`.
 - Do not spawn subagents.
+- `room` reaches your parent and sibling agents. Use it only when the task says to share findings with a named sibling, or when a sibling asks you something. Never wait for a reply: your run ends with your turn.
 
 Your FINAL assistant message is your entire deliverable — it must stand alone, using this format:
 

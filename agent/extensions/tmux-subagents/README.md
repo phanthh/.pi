@@ -37,7 +37,7 @@ tmux_subagent({ name, task, agent })  → returns immediately ("started")
 launch script runs pi in the window   → widget above the editor shows live state
 child finishes                        → result is steered back, triggering a turn
 script: pi …; echo $? > <session>.status [; tmux kill-session (lead)]
-watcher (1s): .ping → "needs help" steer; .exit → done/error;
+watcher (1s): .exit → done/error;
               pane gone → .status (0 = closed, ≠0 = crash code)
 ```
 
@@ -74,7 +74,37 @@ orphaned by an earlier `/reload` are included):
 
 Killing a lead session SIGHUPs its pi → graceful quit → it cascades its own
 children. `/reload` hands live children to the new module (globalThis), which
-re-watches them: results, pings, `status`, `send` and `stop` keep working.
+re-watches them: results, room inboxes, `status` and `stop` keep working.
+
+## Rooms
+
+Every pi process hosts a room for its direct children (root, leads, and
+non-lead spawners such as `reviewer`). `room` is the only agent-to-agent
+channel: there is no `send` action and no ping sidecar. Files, so nothing needs
+a live relay:
+
+```
+~/.pi/agent/rooms/<host session id>/
+  members/<name>.json         host-only writer: status running|done|failed|stopped,
+                              pane/session, final result (≤4000 chars)
+  inbox/<name>/<ts>-<r>.json  any member writes; owner deletes after delivery
+```
+
+- Every process has a `room` tool: `members`, or `send` to `to`. A process sees
+  two scopes: its parent's room (`PI_ROOM`: `parent` + siblings) and its own
+  (its children). `all` = everyone reachable. A name that is both a child and a
+  sibling is refused as ambiguous. Inboxes are polled every 1s and steered in
+  (`room_message`, triggers a turn). No blocking wait: replies just arrive.
+- Host's `parent` inbox steers into the host. `caller_ping` is a flagged room
+  message to `parent` (`subagent_ping` steer); the host answers with
+  `room({ action: "send", to: <child name>, message })`.
+- Names are addresses: launch/resume refuse a name a running child already has.
+- `status` also lists the last 10 finished members with their results.
+- Host restart (crash, `pi --continue`): members still `running` are re-watched;
+  ones whose window/session this pane no longer owns report from sidecars.
+- `resume` refuses a session some live process has open (`--session <path>`
+  in `/proc/*/cmdline`).
+- Rooms untouched for 7 days are pruned when a host starts.
 
 ## Actions
 
@@ -82,8 +112,7 @@ re-watches them: results, pings, `status`, `send` and `stop` keep working.
 | --- | --- |
 | `{ name, task, agent }` | Launch (default action). Fire-and-forget. |
 | `{ action: "list" }` | Agent definitions this role may launch |
-| `{ action: "status" }` | Running children, state, elapsed, lead session |
-| `{ action: "send", id, message }` | Deliver a follow-up prompt to a live child |
+| `{ action: "status" }` | Running children, state, elapsed, lead session; recently finished room members |
 | `{ action: "interrupt", id }` | Escape the child's current turn; session stays alive |
 | `{ action: "stop", id }` | Kill the child (lead: its whole session), return its last output |
 | `{ action: "resume", sessionPath, name?, message? }` | Restart a child session with its original role |
@@ -97,11 +126,12 @@ Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
 - `subagent_done({ message? })` — finish; `message` is the summary, else the
   last assistant text. Refused while own children/runs are pending.
-- `caller_ping({ message })` — ask the parent for help. The child stays alive
-  (`.ping` sidecar); the parent answers with `{ action: "send", id, message }`.
+- `caller_ping({ message })` — ask the parent for help via the room. The child
+  stays alive; the parent's `room` reply arrives as its next message.
+- `room` comes from `index.ts` (every process); see Rooms.
 - Ctrl+Alt+J toggles the child's identity/tools widget.
 
-A `tools` allowlist is passed as `--tools`; `subagent_done`, `caller_ping` and
+A `tools` allowlist is passed as `--tools`; `subagent_done`, `caller_ping`, `room` and
 `codemode` are always added. Without one, children use `defaultTools`.
 
 Every task prompt starts with `Current date: YYYY-MM-DD (Weekday)`.
@@ -145,6 +175,7 @@ Policy (`policy.ts`), at any depth:
 | --- | --- |
 | `PI_SUBAGENT_ID`, `_NAME`, `_AGENT`, `_SESSION`, `_ACTIVITY_FILE` | set for every child |
 | `PI_SUBAGENT_INTERACTIVE=1` | interactive child (no auto-exit) |
+| `PI_ROOM` | room dir the child is a member of |
 | `PI_SUBAGENT_SPAWNS`, `PI_DENY_TOOLS` | policy, see above |
 | `PI_CODING_AGENT_DIR` | propagated; `cwd/.pi/agent` wins when present |
 
@@ -153,11 +184,12 @@ Policy (`policy.ts`), at any depth:
 ```
 src/index.ts     parent extension: tool, widget, watcher, cascade, renderers
 src/child.ts     child extension: subagent_done, caller_ping, auto-exit, activity recorder
-src/tmux.ts      pane I/O + sidecar polling (.exit/.ping/.status)
+src/tmux.ts      pane I/O + sidecar polling (.exit/.status)
 src/activity.ts  child activity snapshot (write/read/validate)
 src/status.ts    snapshot → status kind, transitions, idle note rule
 src/session.ts   summary extraction
 src/policy.ts    deny inheritance, spawns gate, launch spec sidecar
+src/room.ts      rooms: roster, inbox, addressing, prune, live-session check
 agents/          bundled definitions
 ```
 

@@ -45,6 +45,22 @@ import {
 } from "./activity.ts";
 import { findLastAssistantMessage, getNewEntries } from "./session.ts";
 import {
+  drainInbox,
+  formatRoomMessage,
+  formatRoster,
+  HOST,
+  liveSessionPid,
+  ROOM_TOOL_DESCRIPTION,
+  type Scopes,
+  sendRoom,
+  type Member,
+  pruneRooms,
+  readMembers,
+  roomDir,
+  updateMember,
+  writeMember,
+} from "./room.ts";
+import {
   advanceStatusState,
   capStatusLines,
   classifyStatus,
@@ -62,7 +78,6 @@ import {
   isTmuxAvailable,
   pollForExit,
   sendEscape,
-  sendText,
   shellEscape,
   tmuxSetupHint,
 } from "./tmux.ts";
@@ -78,11 +93,13 @@ const POLL_ABORT_KEY = Symbol.for("pi-tmux-subagents/poll-abort-controller");
 const RUNNING_SUBAGENTS_KEY = Symbol.for("pi-tmux-subagents/running");
 // Children alive at /reload: the old module parks them here, the new one re-watches them.
 const RELOAD_HANDOFF_KEY = Symbol.for("pi-tmux-subagents/reload-handoff");
+const HOST_INBOX_INTERVAL_KEY = Symbol.for("pi-tmux-subagents/host-inbox-interval");
 
 {
   const g = globalThis as any;
   clearInterval(g[WIDGET_INTERVAL_KEY]);
   clearInterval(g[STATUS_INTERVAL_KEY]);
+  clearInterval(g[HOST_INBOX_INTERVAL_KEY]);
   g[WIDGET_INTERVAL_KEY] = null;
   g[STATUS_INTERVAL_KEY] = null;
   (g[POLL_ABORT_KEY] as AbortController | undefined)?.abort();
@@ -166,7 +183,7 @@ function loadAgentDefinition(agentName: string): AgentDefinition | null {
 }
 
 // Keep codemode available without widening the child's tool allowlist.
-const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done", "codemode"] as const;
+const CHILD_CONTROL_TOOLS = ["caller_ping", "subagent_done", "room", "codemode"] as const;
 
 /** Child `--tools` allowlist always keeps the control tools and codemode reachable. */
 export function buildChildToolAllowlist(effectiveTools?: string): string | null {
@@ -255,7 +272,7 @@ interface RunningSubagent {
   abortController?: AbortController;
   stopRequested?: boolean;
   interactive: boolean;
-  /** caller_ping delivered, `send` not yet. */
+  /** caller_ping delivered, no reply from us yet. */
   awaitingReply: boolean;
   /** waitingSince of the idle episode already reported. */
   idleSteeredFor: number | null;
@@ -267,6 +284,38 @@ const runningSubagents = new Map<string, RunningSubagent>();
 (globalThis as any)[RUNNING_SUBAGENTS_KEY] = runningSubagents;
 
 let latestCtx: ExtensionContext | null = null;
+/** Room this process hosts for its direct children (every spawner hosts one). */
+let hostRoom: string | null = null;
+const RESULT_LIMIT = 4000;
+
+/** Running member with this name but another session: names are room addresses. */
+function nameTaken(name: string, sessionFile: string): boolean {
+  return [...runningSubagents.values()].some((c) => c.name === name && c.sessionFile !== sessionFile);
+}
+
+function memberOf(running: RunningSubagent): Member {
+  return {
+    name: running.name,
+    id: running.id,
+    agent: running.agent,
+    status: "running",
+    sessionFile: running.sessionFile,
+    surface: running.surface,
+    sessionId: running.sessionId,
+    tmuxSession: running.tmuxSession,
+    activityFile: running.activityFile,
+    interactive: running.interactive,
+    task: running.task,
+    startedAt: running.startTime,
+  };
+}
+
+function endMember(running: Pick<RunningSubagent, "name">, status: Member["status"], result?: string): void {
+  if (!hostRoom) return;
+  try {
+    updateMember(hostRoom, running.name, { status, endedAt: Date.now(), result: result?.slice(0, RESULT_LIMIT) });
+  } catch {}
+}
 let widgetInterval: ReturnType<typeof setInterval> | null = null;
 let statusInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -419,7 +468,7 @@ export function observeRunningSubagent(running: RunningSubagent, observedAt = Da
 export function formatIdleNote(running: Pick<RunningSubagent, "id" | "name" | "tmuxSession">): string {
   const where = running.tmuxSession ? ` in tmux session "${running.tmuxSession}"` : "";
   return `Sub-agent "${running.name}" [${running.id}] idle 2m${where} without calling subagent_done. ` +
-    `Send it a message or stop it.`;
+    `Message it with room({ action: "send", to: "${running.name}", message }) or stop it.`;
 }
 
 function startStatusRefresh(pi: ExtensionAPI) {
@@ -510,6 +559,8 @@ export function buildChildScript(o: {
   activityFile: string;
   artifactDir: string;
   promptArgs: string[];
+  /** Host room the child joins; absent → no room. */
+  room?: string;
 }): string {
   const { spec } = o;
   const parts: string[] = [
@@ -540,6 +591,7 @@ export function buildChildScript(o: {
   env.push(`PI_SUBAGENT_SESSION=${shellEscape(o.sessionFile)}`);
   env.push(`PI_SUBAGENT_ID=${shellEscape(o.id)}`);
   env.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(o.activityFile)}`);
+  if (o.room) env.push(`PI_ROOM=${shellEscape(o.room)}`);
 
   const statusFile = shellEscape(`${o.sessionFile}.status`);
   const lines = [
@@ -547,6 +599,8 @@ export function buildChildScript(o: {
     `# Subagent "${spec.name.replace(/\n/g, " ")}" (${spec.agent}), session ${o.sessionFile}`,
   ];
   if (spec.cwd) lines.push(`cd ${shellEscape(spec.cwd)} || { echo 1 > ${statusFile}; exit 1; }`);
+  // The spawner's own room must not leak into the child.
+  lines.push("unset PI_ROOM");
   lines.push(`${env.join(" ")} ${parts.join(" ")}`);
   lines.push(`echo $? > ${statusFile}`);
   if (spec.lead) lines.push(`tmux kill-session -t "$(tmux display-message -p -t "$TMUX_PANE" '#{session_id}')"`);
@@ -567,13 +621,15 @@ function startChild(o: {
   const activityFile = getSubagentActivityFile(o.artifactDir, id);
   mkdirSync(dirname(activityFile), { recursive: true });
   // Leftovers from an earlier run of this session would end the new watch at once.
-  for (const suffix of [".status", ".exit", ".ping"]) rmSync(`${sessionFile}${suffix}`, { force: true });
+  for (const suffix of [".status", ".exit"]) rmSync(`${sessionFile}${suffix}`, { force: true });
 
   const launchScriptFile = join(o.artifactDir, "subagent-scripts", `${slug(spec.name)}-${id}.sh`);
   mkdirSync(dirname(launchScriptFile), { recursive: true });
   writeFileSync(
     launchScriptFile,
-    buildChildScript({ spec, sessionFile, id, activityFile, artifactDir: o.artifactDir, promptArgs: o.promptArgs }),
+    buildChildScript({
+      spec, sessionFile, id, activityFile, artifactDir: o.artifactDir, promptArgs: o.promptArgs, room: hostRoom ?? undefined,
+    }),
     { mode: 0o755 },
   );
   // Interactive shell: the child gets the user's rc env, like `tmux` tool runs.
@@ -608,6 +664,11 @@ function startChild(o: {
     statusState: createStatusState({ startTimeMs: startTime }),
   };
   runningSubagents.set(id, running);
+  if (hostRoom) {
+    try {
+      writeMember(hostRoom, memberOf(running));
+    } catch {}
+  }
   return running;
 }
 
@@ -694,7 +755,6 @@ export const INTERACTIVE_HINT =
 async function watchSubagent(
   running: RunningSubagent,
   signal: AbortSignal,
-  onPing?: (ping: { name: string; message: string }) => void,
 ): Promise<SubagentResult> {
   const { name, task, surface, startTime, sessionFile } = running;
 
@@ -703,7 +763,6 @@ async function watchSubagent(
       interval: 1000,
       sessionFile,
       onTick: () => observeRunningSubagent(running),
-      onPing,
     });
 
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -769,49 +828,14 @@ export function resolveResultPresentation(
     : `Sub-agent "${name}" completed (${formatElapsed(result.elapsed)}).\n\n${result.summary}${sessionRef}`;
 }
 
-export function formatLivePing(
-  running: Pick<RunningSubagent, "id" | "name">,
-  ping: { name: string; message: string },
-  elapsedSeconds: number,
-): string {
-  return (
-    `Sub-agent "${ping.name}" [${running.id}] needs help (${formatElapsed(elapsedSeconds)}):\n\n${ping.message}\n\n` +
-    `It is still running and waiting for your answer. Reply with ` +
-    `tmux_subagent({ action: "send", id: "${running.id}", message: "..." }); it then continues its task.`
-  );
-}
-
-/** Wire the background watcher: results and pings steer back into this session. */
+/** Wire the background watcher: results steer back into this session (pings come through the room). */
 function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
   const abort = new AbortController();
   running.abortController = abort;
   startWidgetRefresh();
   startStatusRefresh(pi);
 
-  // Live ping: the child stays alive awaiting `send`, so the watcher keeps running.
-  const onPing = (ping: { name: string; message: string }) => {
-    if (running.stopRequested) return;
-    running.awaitingReply = true;
-    const elapsed = Math.floor((Date.now() - running.startTime) / 1000);
-    pi.sendMessage(
-      {
-        customType: "subagent_ping",
-        content: formatLivePing(running, ping, elapsed),
-        display: true,
-        details: {
-          name: ping.name,
-          message: ping.message,
-          agent: running.agent,
-          id: running.id,
-          sessionFile: running.sessionFile,
-          live: true,
-        },
-      },
-      { triggerTurn: true, deliverAs: "steer" },
-    );
-  };
-
-  watchSubagent(running, abort.signal, onPing)
+  watchSubagent(running, abort.signal)
     .then((result) => {
       updateWidget();
       if (running.stopRequested) return;
@@ -833,6 +857,8 @@ function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
         },
         { triggerTurn: true, deliverAs: "steer" },
       );
+      // After delivery: a crash in between re-adopts and re-delivers, never loses it.
+      endMember(running, result.exitCode !== 0 || result.errorMessage ? "failed" : "done", result.summary);
     })
     .catch((err) => {
       updateWidget();
@@ -846,6 +872,7 @@ function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
         },
         { triggerTurn: true, deliverAs: "steer" },
       );
+      endMember(running, "failed", err?.message ?? String(err));
     });
 }
 
@@ -871,7 +898,7 @@ export function resolveTarget(
 
 // ── Tool ──
 
-const ACTIONS = ["launch", "list", "status", "send", "interrupt", "stop", "resume"] as const;
+const ACTIONS = ["launch", "list", "status", "interrupt", "stop", "resume"] as const;
 
 const SubagentParams = Type.Object({
   action: Type.Optional(
@@ -879,18 +906,24 @@ const SubagentParams = Type.Object({
       type: "string",
       enum: [...ACTIONS],
       description:
-        "launch (default) spawns a child; list shows agent definitions; status shows running children; " +
-        "send delivers a follow-up message to a live child; interrupt cancels a child's current turn; " +
-        "stop kills a child; resume restarts a previous child session.",
+        "launch (default) spawns a child; list shows agent definitions you may launch; " +
+        "status shows running and recently finished children; interrupt cancels a child's current turn; " +
+        "stop kills a child and returns its last output; resume restarts a finished child session.",
     }),
   ),
-  name: Type.Optional(Type.String({ description: "Display name for launch/resume (window/session name, widget label)" })),
-  task: Type.Optional(Type.String({ description: "Task prompt for launch" })),
-  agent: Type.Optional(Type.String({ description: "Agent definition (required for launch); see action list" })),
+  name: Type.Optional(
+    Type.String({
+      description:
+        "launch: required, unique among running children; it is the child's room address and window label. " +
+        "resume: optional rename (default: original name). interrupt/stop: may be used instead of id",
+    }),
+  ),
+  task: Type.Optional(Type.String({ description: "launch: required, self-contained task prompt" })),
+  agent: Type.Optional(Type.String({ description: "launch: required agent definition name (see action list)" })),
   cwd: Type.Optional(Type.String({ description: "Working directory for the child; picks up that folder's config" })),
-  id: Type.Optional(Type.String({ description: "Running child id or exact name for status/send/interrupt/stop" })),
-  message: Type.Optional(Type.String({ description: "Message body for send, or follow-up prompt for resume" })),
-  sessionPath: Type.Optional(Type.String({ description: "Child session .jsonl to resume" })),
+  id: Type.Optional(Type.String({ description: "interrupt/stop: running child id or exact name" })),
+  message: Type.Optional(Type.String({ description: "resume: optional prompt sent on restart" })),
+  sessionPath: Type.Optional(Type.String({ description: "resume: required child session .jsonl path" })),
 });
 
 type SubagentToolParams = Static<typeof SubagentParams>;
@@ -938,9 +971,130 @@ function adoptHandoff(pi: ExtensionAPI): void {
   }
 }
 
+/**
+ * After this process restarted (crash, `pi --continue`), re-watch room members
+ * still marked running so their results are not lost. A member whose
+ * window/session this pane no longer owns gets a dead pane id: pollForExit then
+ * reports it from its sidecars instead of watching a reused, unrelated pane.
+ */
+function adoptRoomMembers(pi: ExtensionAPI): void {
+  if (!hostRoom || !isTmuxAvailable()) return;
+  const ownedPanes = new Set(ownedWindows("@pi_subagent").map((w) => w.paneId));
+  const sessions = new Set(ownedSessions());
+  for (const member of readMembers(hostRoom)) {
+    if (member.status !== "running" || runningSubagents.has(member.id)) continue;
+    const owned = member.sessionId ? sessions.has(member.sessionId) : ownedPanes.has(member.surface);
+    const running: RunningSubagent = {
+      id: member.id,
+      name: member.name,
+      task: member.task,
+      agent: member.agent,
+      surface: owned ? member.surface : "%-1",
+      sessionId: owned ? member.sessionId : undefined,
+      tmuxSession: member.tmuxSession,
+      startTime: member.startedAt,
+      sessionFile: member.sessionFile,
+      activityFile: member.activityFile,
+      interactive: member.interactive,
+      awaitingReply: false,
+      idleSteeredFor: null,
+      statusState: createStatusState({ startTimeMs: member.startedAt }),
+    };
+    runningSubagents.set(running.id, running);
+    trackSubagent(pi, running);
+  }
+}
+
+/** Child → host room messages (incl. caller_ping) steer into this session. */
+function startHostInbox(pi: ExtensionAPI): void {
+  const g = globalThis as any;
+  clearInterval(g[HOST_INBOX_INTERVAL_KEY]);
+  const room = hostRoom;
+  if (!room) return;
+  g[HOST_INBOX_INTERVAL_KEY] = setInterval(() => {
+    try {
+      drainInbox(room, HOST, (message) => {
+        const child = [...runningSubagents.values()].find((c) => c.name === message.from);
+        if (message.ping && child) child.awaitingReply = true;
+        pi.sendMessage(
+          {
+            customType: message.ping ? "subagent_ping" : "room_message",
+            content: formatRoomMessage(message),
+            display: true,
+            details: { ...message, name: message.from, message: message.body, agent: child?.agent, id: child?.id, sessionFile: child?.sessionFile },
+          },
+          { triggerTurn: true, deliverAs: "steer" },
+        );
+      });
+    } catch {}
+  }, 1000);
+  g[HOST_INBOX_INTERVAL_KEY].unref?.();
+}
+
+function roomScopes(): Scopes {
+  return { self: process.env.PI_SUBAGENT_NAME ?? HOST, up: process.env.PI_ROOM, own: hostRoom ?? undefined };
+}
+
+/** The one agent-to-agent channel: parent, siblings, own children. Registered in every process. */
+function registerRoomTool(pi: ExtensionAPI): void {
+  pi.registerTool({
+    name: "room",
+    label: "Room",
+    description: ROOM_TOOL_DESCRIPTION,
+    promptSnippet: `room: message your parent ("${HOST}"), sibling agents, or your subagents; "members" lists them`,
+    parameters: Type.Object({
+      action: Type.Unsafe<"members" | "send">({
+        type: "string",
+        enum: ["members", "send"],
+        description: "members lists who you can reach; send queues a message",
+      }),
+      to: Type.Optional(
+        Type.String({ description: `send: required; exact agent name from members, "${HOST}", or "all"` }),
+      ),
+      message: Type.Optional(Type.String({ description: "send: required message body" })),
+    }),
+    async execute(_toolCallId, params) {
+      const scopes = roomScopes();
+      if (params.action === "members") return reply(formatRoster(scopes), { to: [] as string[] });
+      if (!params.to || !params.message) throw new Error("send requires `to` and `message`.");
+      const targets = sendRoom(scopes, params.to, params.message);
+      // A message to a child answers its caller_ping.
+      for (const t of targets) {
+        if (t.room !== scopes.own) continue;
+        for (const c of runningSubagents.values()) if (c.name === t.to) c.awaitingReply = false;
+      }
+      const names = targets.map((t) => t.to);
+      return reply(`Queued for ${names.join(", ")}. Do not wait for a reply; continue your task.`, { to: names });
+    },
+    renderCall(args, theme) {
+      const a = args as { action?: string; to?: string; message?: string };
+      const head = `${theme.fg("toolTitle", theme.bold("room"))} ${theme.fg("accent", a.action ?? "")}`;
+      const to = a.to ? theme.fg("muted", ` → ${a.to}`) : "";
+      const body = a.message ? `\n${theme.fg("dim", a.message.split("\n")[0].slice(0, 120))}` : "";
+      return new Text(head + to + body, 0, 0);
+    },
+  });
+
+  pi.registerMessageRenderer("room_message", (message, _options, theme) => {
+    const d = message.details as { from?: string; body?: string; broadcast?: boolean } | undefined;
+    if (!d) return undefined;
+    const head = `${theme.fg("accent", "✉")} ${theme.fg("toolTitle", theme.bold(d.from ?? "?"))}${theme.fg("dim", d.broadcast ? " → all" : "")}`;
+    const box = new Box(1, 1, (text: string) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(`${head}\n${d.body ?? ""}`, 0, 0));
+    return box;
+  });
+}
+
 export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
   pi.on("session_start", (event, ctx) => {
     latestCtx = ctx;
+    hostRoom = roomDir(ctx.sessionManager.getSessionId());
+    if (!process.env.PI_SUBAGENT_SESSION && event.reason !== "reload") {
+      try {
+        pruneRooms();
+      } catch {}
+    }
+    startHostInbox(pi);
     // session_shutdown can fire without the process dying (session switch in
     // the same pid); a controller aborted there would leave every later watch
     // born dead, so replace it when a session starts.
@@ -949,7 +1103,10 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       g[POLL_ABORT_KEY] = new AbortController();
     }
     if (event.reason === "reload") adoptHandoff(pi);
-    else delete g[RELOAD_HANDOFF_KEY];
+    else {
+      delete g[RELOAD_HANDOFF_KEY];
+      adoptRoomMembers(pi);
+    }
   });
 
   pi.on("session_shutdown", (event) => {
@@ -961,13 +1118,18 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
     (globalThis as any)[WIDGET_INTERVAL_KEY] = null;
     (globalThis as any)[STATUS_INTERVAL_KEY] = null;
     ((globalThis as any)[POLL_ABORT_KEY] as AbortController | undefined)?.abort();
+    clearInterval((globalThis as any)[HOST_INBOX_INTERVAL_KEY]);
     for (const child of runningSubagents.values()) {
       child.stopRequested = true;
       child.abortController?.abort();
+      // cascadeShutdown kills them on every non-reload shutdown.
+      if (event.reason !== "reload") endMember(child, "stopped", "Parent session ended.");
     }
     runningSubagents.clear();
     cascadeShutdown(event.reason);
   });
+
+  registerRoomTool(pi);
 
   // Parents deny this tool to children via PI_DENY_TOOLS (agent `spawning: false`).
   const deniedTools = new Set(csv(process.env.PI_DENY_TOOLS));
@@ -980,8 +1142,9 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       "Spawn and manage sub-agents in tmux. A child opens as a detached window in your tmux session; " +
       "agents marked lead get their own new tmux session, own it, and can spawn their own children there. " +
       `Omit action (or use action "launch") with name+task+agent to spawn one. ${LAUNCH_CONTRACT} ` +
-      'Other actions: "list" (agent definitions), "status" (running children), "send" (message a live child), ' +
-      '"interrupt" (cancel a child turn), "stop" (kill a child), "resume" (restart a child session).',
+      'Other actions: "list" (agent definitions you may launch), "status" (running + recently finished children), ' +
+      '"interrupt" (cancel a child turn), "stop" (kill a child), "resume" (restart a finished child session). ' +
+      "To message a running child, use the room tool.",
     promptSnippet:
       "Spawn sub-agents in tmux with tmux_subagent({ name, task, agent }). " + LAUNCH_CONTRACT,
     parameters: SubagentParams,
@@ -1004,7 +1167,14 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       if (action === "status") {
         const now = Date.now();
         const children = [...runningSubagents.values()];
-        if (children.length === 0) return reply("No running subagents.", { children: [] });
+        const finished = hostRoom ? readMembers(hostRoom).filter((m) => m.status !== "running").slice(-10) : [];
+        const finishedText = finished.length
+          ? `\n\nFinished (latest ${finished.length}):\n` +
+            finished
+              .map((m) => `• ${m.name}${m.agent ? ` (${m.agent})` : ""} — ${m.status}: ${(m.result ?? "").split("\n")[0].slice(0, 160)}\n  session: ${m.sessionFile}`)
+              .join("\n")
+          : "";
+        if (children.length === 0) return reply(`No running subagents.${finishedText}`, { children: [], finished });
         const rows = children.map((child) => {
           observeRunningSubagent(child, now);
           const snapshot = classifyStatus(child.statusState, now);
@@ -1022,10 +1192,10 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           .map((row) =>
             `• ${row.name} [${row.id}]${row.agent ? ` (${row.agent})` : ""}${row.tmuxSession ? ` @${row.tmuxSession}` : ""} — ${row.kind}, ${row.elapsed}`)
           .join("\n");
-        return reply(text, { children: rows });
+        return reply(text + finishedText, { children: rows, finished });
       }
 
-      if (action === "send" || action === "interrupt" || action === "stop") {
+      if (action === "interrupt" || action === "stop") {
         const resolved = resolveTarget(runningSubagents, params.id ?? params.name);
         if ("error" in resolved) return reply(resolved.error, { error: resolved.error }, true);
         const child = resolved.running;
@@ -1048,24 +1218,6 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           });
         }
 
-        if (action === "send") {
-          if (!params.message) return reply("Missing message for send.", { error: "missing message" }, true);
-          if (!isPaneAlive(child.surface)) {
-            return reply(`Subagent "${child.name}" is gone.`, { error: "pane closed" }, true);
-          }
-          try {
-            sendText(child.surface, params.message);
-          } catch (error: any) {
-            const message = `Failed to send to "${child.name}": ${error?.message ?? String(error)}`;
-            return reply(message, { error: message }, true);
-          }
-          child.awaitingReply = false;
-          return reply(
-            `Message delivered to "${child.name}". Its reply steers back when the child finishes; do not poll.`,
-            { id: child.id, name: child.name, status: "message_sent" },
-          );
-        }
-
         child.stopRequested = true;
         child.abortController?.abort();
         closeChild(child);
@@ -1078,6 +1230,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
             summary = findLastAssistantMessage(getNewEntries(child.sessionFile, 0)) ?? summary;
           }
         } catch {}
+        endMember(child, "stopped", summary);
         return reply(`Stopped "${child.name}". Last output:\n\n${summary}`, {
           id: child.id,
           name: child.name,
@@ -1096,8 +1249,19 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       let running: RunningSubagent;
       if (action === "resume") {
         if (!params.sessionPath) return reply("Missing sessionPath for resume.", { error: "missing sessionPath" }, true);
+        params.sessionPath = resolve(ctx.cwd, params.sessionPath);
         if (!existsSync(params.sessionPath)) {
           return reply(`Session file not found: ${params.sessionPath}`, { error: "session not found" }, true);
+        }
+        const livePid = liveSessionPid(params.sessionPath);
+        if (livePid) {
+          const tracked = [...runningSubagents.values()].find((c) => c.sessionFile === params.sessionPath);
+          const hint = tracked ? ` It is your running child "${tracked.name}" [${tracked.id}]: message it with the room tool instead.` : "";
+          return reply(
+            `Session ${params.sessionPath} is already open in live process ${livePid}; a second process would corrupt it.${hint}`,
+            { error: "session already running" },
+            true,
+          );
         }
 
         // Re-apply the role the session was launched with.
@@ -1117,6 +1281,9 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           // Resumer's own denies still apply: resume must not escape them.
           denyTools: resolveDenyTools({ denyTools: saved.denyTools.join(",") }),
         };
+        if (nameTaken(spec.name, params.sessionPath)) {
+          return reply(`A running subagent is already named "${spec.name}". Pass another name.`, { error: "name taken" }, true);
+        }
         writeLaunchSpec(params.sessionPath, spec);
         const artifactDir = artifactDirFor(ctx.sessionManager.getSessionDir(), ctx.sessionManager.getSessionId());
         const promptArgs: string[] = [];
@@ -1152,7 +1319,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
       // launch
       if (!params.name || !params.task || !params.agent) {
         return reply(
-          "Missing name, task or agent. Provide all three to launch (see action list for agents), or set action to list/status/send/interrupt/stop/resume.",
+          "Missing name, task or agent. Provide all three to launch (see action list for agents), or set action to list/status/interrupt/stop/resume.",
           { error: "missing name, task or agent" },
           true,
         );
@@ -1160,6 +1327,10 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
 
       const refusal = spawnRefusal(params.agent, allowedSpawns());
       if (refusal) return reply(refusal, { error: "spawn not allowed" }, true);
+      // Names address room members, so they must be unique among running children.
+      if (nameTaken(params.name, "")) {
+        return reply(`A running subagent is already named "${params.name}". Pick another name.`, { error: "name taken" }, true);
+      }
 
       try {
         running = await launchSubagent(
