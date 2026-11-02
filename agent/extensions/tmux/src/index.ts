@@ -287,6 +287,7 @@ export default function (pi: ExtensionAPI) {
 						scriptPath: join(dir, "command.sh"),
 					};
 					// The outer EXIT trap also reports syntax errors, exit, exec and C-c.
+					// Without the HUP/TERM traps, a killed window records the last status (often 0).
 					// The command's subshell waits for background jobs before completion.
 					// Panes have a TTY, so pagers would block unattended runs.
 					// umask 0022: files must stay readable by containers (bind-mounted init scripts).
@@ -296,6 +297,8 @@ status_file=${shellQuote(run.statusPath!)}
 channel=${shellQuote(channel)}
 trap 'status=$?; printf "%s\\n" "$status" > "$status_file"; tmux wait-for -S "$channel"' EXIT
 trap ':' INT
+trap 'exit 129' HUP
+trap 'exit 143' TERM
 (
 trap 'wait' EXIT
 ${command}

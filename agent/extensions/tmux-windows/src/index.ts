@@ -140,11 +140,17 @@ export function killSession(sessionId: string): void {
   try { tmux(["kill-session", "-t", sessionId]); } catch { /* gone */ }
 }
 
+/**
+ * False only when tmux confirms the pane is gone. A failed query (busy server,
+ * spawnSync ETIMEDOUT) counts as alive: callers poll, and a false "gone" makes
+ * them report a still-running window or child as closed.
+ */
 export function isPaneAlive(paneId: string): boolean {
   try {
     return tmux(["list-panes", "-a", "-F", "#{pane_id}"]).split("\n").includes(paneId);
-  } catch {
-    return false;
+  } catch (error) {
+    const stderr = error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "";
+    return !/no server running|error connecting/.test(stderr);
   }
 }
 
