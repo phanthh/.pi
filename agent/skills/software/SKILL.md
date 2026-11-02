@@ -1,6 +1,6 @@
 ---
 name: software
-description: Software engineering mindset. MUST use whenever writing, changing, fixing, reviewing, designing, or building software/code/skill/instructions/prompt of any kind.
+description: Software engineering mindset. MUST use whenever writing, reading, changing, fixing, reviewing, designing, or building software/code/skill/instructions/prompt of any kind.
 ---
 
 Mindset (what you build — YAGNI extremist, deletion before addition):

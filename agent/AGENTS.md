@@ -28,6 +28,7 @@
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
     - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
+    - Read `gh-stack` skill when using "stacking PRs".
 - Browser/UI: `agent-browser` MCP via codemode. Read the `agent-browser` skill first.
 - Langfuse: Use `langfuse` cli. Run `langfuse api help` to see available commands.
 - Model ML platform MCP: use mml-platform mcp to deploy preview environment (when prompted)
@@ -42,6 +43,7 @@
 - Use tmux windows for background tasks (dev servers) + subagents.
 - linting, formatting are short tasks -> synchronous -> run with `bash`.
 - typechecking, test running, compiling are long tasks -> asynchronous -> run via `tmux` tool.
+- if there are CIs, leverage them for test runnings, instead of run tests locally (heavy)
 
 # Write-it-down:
 
@@ -61,10 +63,13 @@
         - When domains fuzzy: search/read/list to find separation of domains, THEN fan out with scouts.
     - Use `reviewer` subagents for code review whenever appropriate:
         - Intelligently group and spread scope among multiple `reviewer` subagents for large review tasks/diffs.
+        - Even for small changes, can be useful for second opinions.
     - All instructions to subagents MUST be self-contained, unique, detailed and compact.
         - If needed, write shared handoff context to files, then reference them.
-- If appropriate, use git worktrees for isolated tasks:
+    - You are responsible for the work of your subagents.
+        - It's on YOU if your subagents fucked something up. So be critical of you subagents.
+- If appropriate, prefer to use git worktrees for isolated tasks:
     - Use alongside subagents whenever appropriate
-    - Always put your worktrees in `/tmp` (or `/var/tmp`)
+    - Always put your worktrees in `/var/tmp` (or `/tmp`, for shortlive ones)
     - Automatically clean up worktrees (via `git worktree remove`) whenever appropriate
     - Don't use worktrees that are not managed/created by you.
