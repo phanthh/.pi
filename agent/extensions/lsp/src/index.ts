@@ -68,7 +68,7 @@ const DESCRIPTION = `Language Server Protocol code intelligence. Operations:
 - documentSymbol: all symbols in filePath
 - workspaceSymbol: project-wide symbols matching query (filePath only selects which server; empty query = all)
 - diagnostics: current errors/warnings for filePath (call after editing to verify)
-Servers start lazily per project root (typescript, pyright, gopls, rust-analyzer builtin; extend via ~/.pi/agent/lsp.json or .pi/lsp.json). Errors if no server for the file type or binary not installed.`;
+Servers start lazily per project root: nearest marker dir (pyproject.toml, tsconfig.json, ...) between file and cwd, else cwd. Pass root to override (e.g. files in a git worktree outside cwd). Builtin servers: typescript, pyright, gopls, rust-analyzer builtin; extend via ~/.pi/agent/lsp.json or .pi/lsp.json). Errors if no server for the file type or binary not installed.`;
 
 export default function (pi: ExtensionAPI) {
 	const clients = new Map<string, Promise<Client>>();
@@ -81,13 +81,13 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/** Clients for file; spawns missing ones. Throws if no server matches ext or binary missing. */
-	async function clientsFor(file: string, cwd: string): Promise<Client[]> {
+	async function clientsFor(file: string, cwd: string, rootOverride?: string): Promise<Client[]> {
 		const ext = extname(file);
-		const servers = loadServers(cwd).filter((s) => s.extensions.includes(ext));
+		const servers = loadServers(rootOverride ?? cwd).filter((s) => s.extensions.includes(ext));
 		if (!servers.length) throw new Error(`No LSP server configured for "${ext}" files.`);
 		const result = await Promise.all(
 			servers.map((base) => {
-				const root = findRoot(file, base.roots, cwd);
+				const root = rootOverride ?? findRoot(file, base.roots, cwd);
 				const server = resolveForRoot(base, root);
 				const key = `${server.id}:${root}`;
 				if (broken.has(key)) throw new Error(broken.get(key));
@@ -146,6 +146,9 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			operation: Type.Unsafe<(typeof OPERATIONS)[number]>({ type: "string", enum: [...OPERATIONS] }),
 			filePath: Type.String({ description: "Absolute or cwd-relative file path" }),
+			root: Type.Optional(
+				Type.String({ description: "Project root dir override (absolute or cwd-relative), e.g. worktree backend dir. Default: nearest marker dir up to cwd, else cwd" }),
+			),
 			line: Type.Optional(Type.Integer({ minimum: 1, description: "1-based line (positional ops)" })),
 			character: Type.Optional(Type.Integer({ minimum: 1, description: "1-based column (positional ops)" })),
 			query: Type.Optional(Type.String({ description: "workspaceSymbol query; empty = all" })),
@@ -162,7 +165,13 @@ export default function (pi: ExtensionAPI) {
 			if (params.operation === "rename" && !params.newName) throw new Error("rename requires newName");
 			if (params.operation === "renameFile" && !params.newPath) throw new Error("renameFile requires newPath");
 
-			const clients = await clientsFor(file, ctx.cwd);
+			let root: string | undefined;
+			if (params.root) {
+				root = resolve(ctx.cwd, params.root);
+				if (!existsSync(root)) throw new Error(`Root not found: ${root}`);
+				if (relative(root, file).startsWith("..")) throw new Error(`File ${file} is outside root ${root}`);
+			}
+			const clients = await clientsFor(file, ctx.cwd, root);
 			await Promise.all(clients.map((c) => c.idle()));
 			const uri = pathToFileURL(file).href;
 			const textDocument = { uri };
