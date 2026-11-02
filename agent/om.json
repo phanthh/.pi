@@ -1,5 +1,8 @@
 {
-  "model": { "provider": "openai-codex", "id": "gpt-6-luna" },
+  "model": {
+    "provider": "openai-codex",
+    "id": "gpt-6.1-terra"
+  },
   "observerModel": null,
   "reflectorModel": null,
   "dropperModel": null,

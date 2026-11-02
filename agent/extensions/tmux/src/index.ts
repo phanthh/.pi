@@ -20,7 +20,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { closeWindow, createWindow, isPaneAlive, ownedWindows, userShell, viaUserShell } from "@pi-ext/tmux-windows";
@@ -236,7 +235,9 @@ export default function (pi: ExtensionAPI) {
 			"Never create, kill, or move tmux windows or sessions via bash (`tmux new-window`, `new-session`, `break-pane`, `kill-window`, ...); such commands are blocked. Use this tool (windows) or `tmux_subagent` instead.",
 		],
 		parameters: Type.Object({
-			action: StringEnum(["run", "read", "send", "stop", "list"] as const, {
+			action: Type.Unsafe<"run" | "read" | "send" | "stop" | "list">({
+				type: "string",
+				enum: ["run", "read", "send", "stop", "list"],
 				description: "Action to perform",
 			}),
 			pane: Type.Optional(Type.String({ description: "Window name (required for run/read/send/stop)" })),

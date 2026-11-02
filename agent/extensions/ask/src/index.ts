@@ -649,6 +649,11 @@ export async function showQuestions(
 			},
 			handleInput,
 		};
+	}, {
+		blocked: {
+			kind: "question",
+			message: questions.length === 1 ? questions[0].question : `${questions.length} questions`,
+		},
 	});
 }
 

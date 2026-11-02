@@ -7,7 +7,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
@@ -145,7 +144,7 @@ export default function (pi: ExtensionAPI) {
 			"Use lsp diagnostics after edits to verify no type errors were introduced.",
 		],
 		parameters: Type.Object({
-			operation: StringEnum(OPERATIONS),
+			operation: Type.Unsafe<(typeof OPERATIONS)[number]>({ type: "string", enum: [...OPERATIONS] }),
 			filePath: Type.String({ description: "Absolute or cwd-relative file path" }),
 			line: Type.Optional(Type.Integer({ minimum: 1, description: "1-based line (positional ops)" })),
 			character: Type.Optional(Type.Integer({ minimum: 1, description: "1-based column (positional ops)" })),

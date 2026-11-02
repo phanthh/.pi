@@ -10,8 +10,6 @@
  * Liveness comes from the child-written activity snapshot.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { keyHint } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -877,7 +875,9 @@ const ACTIONS = ["launch", "list", "status", "send", "interrupt", "stop", "resum
 
 const SubagentParams = Type.Object({
   action: Type.Optional(
-    StringEnum([...ACTIONS], {
+    Type.Unsafe<(typeof ACTIONS)[number]>({
+      type: "string",
+      enum: [...ACTIONS],
       description:
         "launch (default) spawns a child; list shows agent definitions; status shows running children; " +
         "send delivers a follow-up message to a live child; interrupt cancels a child's current turn; " +
@@ -1286,7 +1286,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
             for (const line of lines.slice(0, 5)) contentLines.push(theme.fg("dim", line.slice(0, width - 6)));
             if (lines.length > 5) contentLines.push(theme.fg("muted", `… ${lines.length - 5} more lines`));
           }
-          contentLines.push(theme.fg("muted", keyHint("app.tools.expand", "to expand")));
+          contentLines.push(theme.fg("muted", options.keyHint("app.tools.expand", "to expand")));
         }
 
         const box = new Box(1, 1, bgFn);
@@ -1311,7 +1311,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           ...lines.map((line) => theme.fg("dim", truncateToWidth(line, lineWidth))),
         ];
         if (overflow > 0) contentLines.push(theme.fg("muted", `+${overflow} more running.`));
-        if (!options.expanded) contentLines.push(theme.fg("muted", keyHint("app.tools.expand", "to expand")));
+        if (!options.expanded) contentLines.push(theme.fg("muted", options.keyHint("app.tools.expand", "to expand")));
 
         const box = new Box(1, 1, (text: string) => theme.bg("customMessageBg", text));
         box.addChild(new Text(contentLines.join("\n"), 0, 0));
@@ -1337,7 +1337,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
           if (details.sessionFile) contentLines.push("", theme.fg("dim", `Session: ${details.sessionFile}`));
         } else {
           contentLines.push(theme.fg("dim", (details.message ?? "").split("\n")[0].slice(0, width - 10)));
-          contentLines.push(theme.fg("muted", keyHint("app.tools.expand", "to expand")));
+          contentLines.push(theme.fg("muted", options.keyHint("app.tools.expand", "to expand")));
         }
 
         const box = new Box(1, 1, (text: string) => theme.bg("toolSuccessBg", text));
