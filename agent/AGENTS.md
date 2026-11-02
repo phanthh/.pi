@@ -11,21 +11,14 @@
 # External human/written communications (how you write when the readers are not me/the main user/humans):
 
 - Turn off caveman speech. Speak and write in ASD-STE100 Simplified Technical English.
-- PRs etiquette:
-    - Be upfront, to-the-point, specific and concise when writing PRs and commenting on PRs.
-    - Respect the readers' time: appendices/extra information should be collapsed behind toggleable headers.
-    - Always resolve inline comment threads whenever appropriate.
-    - Include image visuals on the PR's description for frontend changes, if available.
-    - No loose ends: when a PR is opened (except draft PRs), always drive them to approval:
-        - Response to all review comments. Close/resolve comment threads once addressed.
-        - If changes requested, address it, then post update comments and re-request reviews.
-        - Make sure the only blockers are the reviewers (if applied). If there are CIs, ensure they are always green.
+- PRs: MUST read `pr-etiquette` skill before writing/posting anything on GitHub. Opened PRs (non-draft) → drive to approval, no loose ends.
 
 # Tools/CLIs:
 
 - CLIs: `git`, `gh`, `rg` (instead of `grep`), `fd` (instead of `find`), `jq`, `ast-grep`, standard unix (`head`, `tail`, `awk`, `sed`, `tr`, `xargs`, ...)
 - GitHub ops always via `gh`.
     - Poll PR checks: `gh pr checks [<pr>] --watch [--fail-fast]` (exit 8 = pending; `--json bucket,name,link` for pass/fail/pending).
+    - Watch PR through CI + reviews (exit-on-event, tmux-friendly): `babysit-pr` skill (`pr-wait`). Never both watchers on one PR.
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
     - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
     - Read `gh-stack` skill when using "stacking PRs".

@@ -33,6 +33,15 @@ Review method:
 3. Look critically across correctness, security, data integrity, concurrency, reliability, performance, compatibility, tests, repository standards, spec compliance, and needless complexity. Follow your principles. Keep concerns within the assigned scope.
 4. Prove impact. A possible interaction is not a finding unless you identify the concrete affected path, input, environment, or invariant. Distinguish uncertainty explicitly.
 5. Report every issue the author would likely fix, but prefer no finding over a speculative or trivial one. Ignore cosmetic style unless it obscures behavior or violates a documented rule. Deduplicate findings by defect and remedy.
+6. Hold the change to the smallest one that meets the stated intent. Code, tests, guards, options, or abstractions the intent does not need are findings; their remedy is to delete or narrow. Prefer remedies that delete or narrow code over new locks, caches, helpers, or options.
+
+Scope and severity:
+- If the task states intent and out-of-scope items, judge against them. Do not ask for work outside the intent.
+- Issues only on other paths, rare edge cases, small performance costs, or extra compatibility are `[P3]` at most, unless they cause security or data loss.
+
+Follow-up rounds:
+- Number findings `F1`, `F2`, … and keep the ids stable across rounds.
+- When the task says it is a follow-up round (often with a ledger of `fixed` / `disagree` / `declined` items), review only open ids and code changed since the last round. Mark each prior id `resolved` or `still open: <reason>`. Do not reopen a declined item without new evidence. New findings must be in changed code or be P0/P1.
 
 A valid finding must:
 - Be introduced or made newly reachable by the reviewed change.
@@ -50,7 +59,7 @@ Priorities:
 
 Output:
 - Findings first, highest priority first. One item per distinct issue:
-  `N. [P1] Imperative title — path/to/file.ext:Lstart[-Lend]`
+  `F1. [P1] Imperative title — path/to/file.ext:Lstart[-Lend]`
   Follow with one short paragraph explaining why it fails, the required scenario, and the concrete remedy direction. Include confidence (`high`, `medium`, or `low`).
 - For a repository-rule-supported finding, cite the instruction file and smallest supporting line range in the paragraph.
 - Then give `Verdict: patch is correct` or `Verdict: patch is incorrect`, followed by a 1-3 sentence explanation.
