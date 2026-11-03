@@ -1,6 +1,6 @@
 # whitelist: ignore everything, allow selected paths
 /*
-!/.github/
+!/AGENTS.md
 !/README.md
 !/LICENSE
 !/.gitignore

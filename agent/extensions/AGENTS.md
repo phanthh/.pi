@@ -15,8 +15,7 @@ extensions/
 
 - TS runs **unbundled, from source** (`src/index.ts`); no build step. Imports of local files use
   explicit `.ts` extensions.
-- `pnpm check` (= `tsc --noEmit`) is the typecheck gate. Run it after every edit, and it MUST pass
-  before every `git push` (no CI; this is the only gate).
+- `pnpm check` (= `tsc --noEmit`) is the typecheck gate. Run it after every edit.
 - `/reload` in a live session hot-reloads these (auto-discovered location).
 - New extension = new dir + `package.json` with `pi.extensions` + `src/index.ts`; then `pnpm install`.
 - Shared code goes in a plain library package (see `@pi-ext/tmux-windows`), consumed via
