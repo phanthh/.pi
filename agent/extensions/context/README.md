@@ -158,6 +158,5 @@ Deletion is **context-window optimization**, not secure erasure or semantic forg
 ## Checks
 
 ```sh
-pnpm --filter pi-context selftest
 pnpm check
 ```

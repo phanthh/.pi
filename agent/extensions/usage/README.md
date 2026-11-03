@@ -24,6 +24,5 @@ Fallback accounts are polled only while their access token is unexpired — refr
 ## Development
 
 ```bash
-pnpm --filter @pi-ext/usage test   # node --test, no network
 pnpm check
 ```

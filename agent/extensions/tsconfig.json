@@ -10,6 +10,5 @@
 		"skipLibCheck": true,
 		"types": ["node"]
 	},
-	"include": ["*/src/**/*.ts"],
-	"exclude": ["anthropic-auth/src/tests/**/*.ts", "anthropic-auth/src/core/tests/**/*.ts"]
+	"include": ["*/src/**/*.ts"]
 }

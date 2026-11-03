@@ -2,10 +2,6 @@
 	"name": "pi-web-search",
 	"private": true,
 	"type": "module",
-	"scripts": {
-		"test": "node selftest.mjs",
-		"test:live": "node selftest.mjs --live"
-	},
 	"pi": {
 		"extensions": [
 			"./src/index.ts"

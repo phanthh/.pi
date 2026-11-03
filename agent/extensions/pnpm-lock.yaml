@@ -9,9 +9,6 @@ catalogs:
     '@cortexkit/subc-client':
       specifier: ^0.11.1
       version: 0.11.1
-    '@types/bun':
-      specifier: ^1.4.4
-      version: 1.4.4
     '@types/node':
       specifier: ^24.0.0
       version: 24.13.3
@@ -74,10 +71,6 @@ importers:
       xxhash-wasm:
         specifier: 'catalog:'
         version: 1.1.0
-    devDependencies:
-      '@types/bun':
-        specifier: 'catalog:'
-        version: 1.4.4
 
   ask: {}
 
@@ -146,9 +139,6 @@ packages:
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
-  '@types/bun@1.4.4':
-    resolution: {integrity: sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ==}
-
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
@@ -159,9 +149,6 @@ packages:
   boolbase@2.0.0:
     resolution: {integrity: sha512-DkVaaQHymRhpYEYo9x1oo7Q7B0Y6KJUsjm3c9eTyFDby4MHLBTwZ6ZDWBel5zrYxj1WsZgC5oLpiz+93MluXeA==}
     engines: {node: '>=20.19.0'}
-
-  bun-types@1.4.4:
-    resolution: {integrity: sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ==}
 
   commander@12.1.0:
     resolution: {integrity: sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA==}
@@ -303,10 +290,6 @@ snapshots:
   '@mixmark-io/domino@2.2.0':
     optional: true
 
-  '@types/bun@1.4.4':
-    dependencies:
-      bun-types: 1.4.4
-
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
@@ -315,11 +298,6 @@ snapshots:
     optional: true
 
   boolbase@2.0.0: {}
-
-  bun-types@1.4.4:
-    dependencies:
-      '@types/node': 24.13.3
-      undici-types: 7.18.2
 
   commander@12.1.0: {}
 

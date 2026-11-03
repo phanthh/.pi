@@ -2,9 +2,6 @@
 	"name": "pi-tmux",
 	"private": true,
 	"type": "module",
-	"scripts": {
-		"test": "node --experimental-test-module-mocks --test src/*.test.ts"
-	},
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},

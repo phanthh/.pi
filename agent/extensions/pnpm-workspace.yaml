@@ -3,7 +3,6 @@ packages:
 
 catalog:
   "@cortexkit/subc-client": ^0.11.1
-  "@types/bun": ^1.4.4
   "@types/node": ^24.0.0
   defuddle: ^0.19.2
   linkedom: ^0.18.13

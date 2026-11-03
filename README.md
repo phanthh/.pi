@@ -59,7 +59,7 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-Individual packages may expose additional tests or self-checks. See their `package.json` and README files.
+No tests. `pnpm check` is the only gate.
 
 ## License
 

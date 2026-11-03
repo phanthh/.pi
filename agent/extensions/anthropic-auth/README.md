@@ -38,7 +38,6 @@ Every provider response carries `x-pi-anthropic-auth-account` (`main`, a fallbac
 
 ```bash
 pnpm check
-pnpm test:anthropic-auth
 ```
 
 Source loads directly from `src/index.ts`; no build step.

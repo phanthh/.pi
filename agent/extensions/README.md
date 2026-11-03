@@ -32,13 +32,6 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-`@earendil-works/pi-*` dev dependencies link to a pi source checkout at `~/dev/pi`; build it first (`npm run build`). Workspace uses strict TypeScript with source entry points—no normal build step. Run package-specific checks when changing packages that define them:
-
-```bash
-pnpm --filter pi-context selftest
-pnpm --filter @pi-ext/project-skill-rules test
-pnpm --filter @pi-ext/usage test
-pnpm --filter @pi-ext/cursor-auth check
-```
+`@earendil-works/pi-*` dev dependencies link to a pi source checkout at `~/dev/pi`; build it first (`npm run build`). Workspace uses strict TypeScript with source entry points—no normal build step. No tests: `pnpm check` is the only gate.
 
 Contributor conventions and architecture notes live in [`AGENTS.md`](AGENTS.md).

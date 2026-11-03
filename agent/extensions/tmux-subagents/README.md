@@ -193,5 +193,4 @@ src/room.ts      rooms: roster, inbox, addressing, prune, live-session check
 agents/          bundled definitions
 ```
 
-Checks from the extensions workspace: `pnpm --filter pi-tmux-subagents test`
-(unit + e2e on an isolated tmux server with a stub `pi`) and `pnpm check`.
+Check from the extensions workspace: `pnpm check`.

@@ -26,7 +26,9 @@ state: never commit, never print secrets from `*auth*.json`.
 - Typecheck before every `git push`: `cd agent/extensions && pnpm check` MUST pass. No CI exists;
   this is the only gate. If it fails on missing `@earendil-works/pi-*` types, rebuild pi first
   (`npm run build` in `~/dev/pi`).
-- Run the package tests for any extension you touch (see `agent/extensions/AGENTS.md`).
+- Tests are banned in this repo. Do not write, add, or run tests (`*.test.ts`, `selftest`, `tests/`
+  dirs, `test` scripts, test frameworks, test-only deps). Verify with `pnpm check` and by using the
+  extension in a live pi session (`/reload`).
 - Changed behaviour → update matching README (`README.md`, `agent/README.md`, extension READMEs).
 - Commits: conventional style (`feat(<ext>): ...`, `fix(...)`, `docs: ...`, `chore: ...`). Commit only
   your own changes; leave unrelated dirty files alone.

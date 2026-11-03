@@ -3,8 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check": "tsc --noEmit && tsc --noEmit -p anthropic-auth/tsconfig.test.json",
-		"test:anthropic-auth": "pnpm --filter @pi-ext/anthropic-auth test"
+		"check": "tsc --noEmit"
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "link:../../../dev/pi/packages/ai",

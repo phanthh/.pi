@@ -23,10 +23,7 @@ Wraps the editor factory already installed when this extension's `session_start`
 From `~/.pi/agent/extensions`:
 
 ```sh
-pnpm --filter @pi-ext/up-history test
 pnpm check
 ```
-
-Tests use Node's `--experimental-strip-types`, built-in assertions, temporary session files, and Pi's real native editor. No test framework or new dependencies.
 
 Behavior was informed by [pi-up-history](https://github.com/richardgill/pi-extensions/tree/main/extensions/pi-up-history). This is an independent implementation; the upstream checkout had no license, so no source or comments were copied.
