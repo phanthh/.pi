@@ -1,7 +1,5 @@
 # .pi
 
-[![Check](https://github.com/phanthh/.pi/actions/workflows/check.yml/badge.svg)](https://github.com/phanthh/.pi/actions/workflows/check.yml)
-
 Personal [pi](https://pi.dev) setup: TypeScript extensions, agent instructions, skills, and a Tokyo Night theme.
 
 This is a working dotfiles repo, not a stable distribution. Review every extension before using it: pi extensions run with your full user permissions.
