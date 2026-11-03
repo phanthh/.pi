@@ -71,7 +71,7 @@ describe('custodyCredentialIdFromResolution', () => {
       source: 'manifest' as const,
       handle: 'ckh_c'.padEnd(47, '_'),
       credentialId: undefined,
-    }
+    } as unknown as CustodyHandleResolution
     expect(custodyCredentialIdFromResolution(resolution, 'main')).toBe(
       'oauth:anthropic:main',
     )
@@ -95,10 +95,10 @@ describe('readCustodyHandles provider scope', () => {
         {
           provider,
           serve,
-          accounts: [],
+          accounts: [] as Array<Record<string, unknown>>,
         },
       ],
-    } as const
+    }
   }
 
   function manifestFromParsed(

@@ -26,6 +26,7 @@ import {
   getOrCreateMainAccountId,
   getOrCreatePrimeAuthLineageId,
   loadAccounts,
+  type PrimeUsageCounters,
   saveAccountState,
 } from '../accounts.ts'
 import {
@@ -47,7 +48,6 @@ import {
   type PrimeAccountStatus,
   PrimeManager,
   type PrimeSendResult,
-  type PrimeUsageCounters,
   parsePrimeCommandAction,
   primeAccountMarkerDir,
   primeIsEligible,
@@ -197,7 +197,7 @@ describe('buildPrimeStatusSummary', () => {
       {
         id: 'main',
         label: 'main',
-        nextDueAt: null,
+        nextDueAt: undefined,
         usage: {
           count: 12,
           inputTokens: 240,
@@ -231,7 +231,7 @@ describe('executePrimeCommand', () => {
     {
       id: 'main',
       label: 'main',
-      nextDueAt: null,
+      nextDueAt: undefined,
       usage: { count: 0, inputTokens: 0, outputTokens: 0, since: 1 },
       estimatedCostUsd: 0,
     },
@@ -394,7 +394,7 @@ async function makeHarness(opts: {
       return result
     },
     sendPrime: async (id) => {
-      const result = opts.send
+      const result: PrimeSendResult = opts.send
         ? await opts.send(id)
         : {
             ok: true,

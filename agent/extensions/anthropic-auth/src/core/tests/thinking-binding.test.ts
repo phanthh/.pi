@@ -8,7 +8,10 @@ import {
 
 const bodyWith = (model: string, block?: Record<string, unknown>) => ({
   model,
-  thinking: { type: 'adaptive', display: 'summarized' },
+  thinking: { type: 'adaptive', display: 'summarized' } as Record<
+    string,
+    unknown
+  >,
   messages: [
     { role: 'user', content: 'summary' },
     ...(block

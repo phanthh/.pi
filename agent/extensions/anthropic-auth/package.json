@@ -6,10 +6,15 @@
 		"test": "bun test --preload ./src/tests/setup.ts src/tests && bun test --preload ./src/core/tests/setup.ts src/core/tests"
 	},
 	"pi": {
-		"extensions": ["./src/index.ts"]
+		"extensions": [
+			"./src/index.ts"
+		]
 	},
 	"dependencies": {
 		"@cortexkit/subc-client": "catalog:",
 		"xxhash-wasm": "catalog:"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:"
 	}
 }

@@ -36,7 +36,7 @@ test('a completed older main request does not clear a newer in-flight refresh', 
         await releaseSecond.promise
       }
       return Response.json(quotaResponse)
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
   })
 
   const first = manager.refreshMainWithMetadata('main', 'token-a')

@@ -102,6 +102,7 @@ test('excludes an empty-material vault fallback after its quota policy fails', a
   const account: OAuthAccount = {
     id: 'vault-fallback',
     type: 'oauth',
+    refresh: '',
     enabled: true,
     quota: {
       checkedAt: 0,
@@ -128,7 +129,7 @@ test('excludes an empty-material vault fallback after its quota policy fails', a
       token: 'vault-fallback-access',
       source: 'vault',
     }),
-    fetchImpl: async (_input, init) => {
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
       authorizations.push(new Headers(init?.headers).get('authorization') ?? '')
       return new Response(
         JSON.stringify({
@@ -136,7 +137,7 @@ test('excludes an empty-material vault fallback after its quota policy fails', a
           seven_day: { utilization: 96 },
         }),
       )
-    },
+    }) as unknown as typeof fetch,
   })
 
   await expect(manager.getUsableFallbackAccounts(storage)).resolves.toEqual([])
