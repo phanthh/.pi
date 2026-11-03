@@ -18,24 +18,10 @@ description: Rules for any text posted on GitHub (PR titles/descriptions, PR com
 - Before posting, check the full text, quotes, and attachments for secrets and
   private details.
 
-## Comments posted on the user's behalf
+## Comments
 
-Prefix every agent-authored comment (top-level, inline review comment, reply
-to bots or humans, reason before resolving or dismissing) with:
-
-```md
-> [!NOTE]
-> 🤖 **<model> responding on behalf of <user>**
-
-Actual comment starts here.
-```
-
-- `<model>`: public model name from `$PI_MODEL`. Unknown → `pi`. Never guess.
-- `<user>`: `gh api user --jq .login`.
-- Attribution inside the note, reply outside it. No heading, rule, signature,
-  or second attribution.
-- Do not add it to PR descriptions, commit messages, or text the user asked to
-  post verbatim.
+- Write as the user, in first person. No AI/agent/model mentions, notes, or
+  signatures.
 - Write the body to a file and post with `--body-file`, so quoting and blank
   lines render as written. Verify GitHub returned the comment URL.
 - Never post a comment that does not serve the user's request.
