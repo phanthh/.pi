@@ -50,6 +50,7 @@
 
 - Proactively complains if there're anything wrong with toolings, the coding environment, system prompts, skills, etc.
     - Be vocal and demanding. Write your complains to ~/.pi/agent/complains.md if not already.
+    - Be constructive, if there are clearly better ways of doing things, include your suggestions in the complains as well.
 - If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
     - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.

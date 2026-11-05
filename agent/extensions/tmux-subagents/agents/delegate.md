@@ -1,8 +1,8 @@
 ---
 name: delegate
 description: General-purpose helper for focused delegated tasks. Can multi-task if needed.
-model: openai-codex/gpt-6-astra
-thinking: medium
+model: openai-codex/gpt-6.1-sol
+thinking: high
 deny-tools: ask, goal
 system-prompt: append
 spawning: true
