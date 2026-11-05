@@ -18,11 +18,12 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { closeWindow, createWindow, isPaneAlive, ownedWindows, userShell, viaUserShell } from "@pi-ext/tmux-windows";
+import { formatElapsedMMSS, renderBox } from "@pi-ext/tmux-windows/widget";
 import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 import { registerResurrect } from "./resurrect.ts";
 
@@ -50,11 +51,15 @@ interface SharedState {
 	watchers: Map<string, string>;
 	sweep?: NodeJS.Timeout;
 	sweepNow?: () => void;
+	/** Latest session ctx; the widget renders through it. */
+	ctx?: ExtensionContext;
+	widgetTimer?: NodeJS.Timeout;
 }
 
 // v2: runs are managed windows. Pre-window (pane) state stays under the old key, handled by its own closures.
 const STATE_KEY = Symbol.for("pi-tmux/state-v2");
 const SWEEP_INTERVAL_MS = 2000;
+const WIDGET_KEY = "tmux-windows";
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, "'\\''")}'`;
@@ -119,6 +124,51 @@ export default function (pi: ExtensionAPI) {
 	clearInterval(state.sweep);
 	state.sweep = setInterval(state.sweepNow, SWEEP_INTERVAL_MS);
 	state.sweep.unref();
+	clearInterval(state.widgetTimer);
+	state.widgetTimer = undefined;
+
+	// Same box as the subagents widget. Only `run` windows: stop/restart adopts
+	// untracked windows briefly, without a statusPath.
+	function updateWidget() {
+		const ctx = state.ctx;
+		if (!ctx?.hasUI) return;
+		const active = () => [...runs.values()].filter((run) => run.paneId && run.statusPath);
+		try {
+			if (active().length === 0) {
+				clearInterval(state.widgetTimer);
+				state.widgetTimer = undefined;
+				ctx.ui.setWidget(WIDGET_KEY, undefined);
+				return;
+			}
+			ctx.ui.setWidget(
+				WIDGET_KEY,
+				() => ({
+					invalidate() {},
+					render: (width: number) => {
+						const list = active();
+						const rows = list.map((run) => ({
+							left: ` ${formatElapsedMMSS(run.started)}  ${run.pane} › ${run.command.replace(/\s+/g, " ")} `,
+							right: run.result ? " finishing " : " running ",
+						}));
+						return renderBox("tmux", `${list.length} running`, rows, width);
+					},
+				}),
+				{ placement: "aboveEditor" },
+			);
+		} catch {
+			// Stale ctx (session replaced); next session_start re-renders.
+			return;
+		}
+		if (!state.widgetTimer) {
+			state.widgetTimer = setInterval(updateWidget, 1000);
+			state.widgetTimer.unref();
+		}
+	}
+
+	pi.on("session_start", (_event, ctx) => {
+		state.ctx = ctx;
+		updateWidget();
+	});
 
 	function finishPane(run: PaneRun, reason = "finished") {
 		if (run.result) return run.result;
@@ -151,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 			// Delete right before steering: a subagent may auto-exit once this hits 0.
 			runs.delete(run.paneId);
 			watchers.delete(run.paneId);
+			updateWidget();
 			api().sendMessage(
 				{
 					customType: "tmux_result",
@@ -191,6 +242,8 @@ export default function (pi: ExtensionAPI) {
 	// Quit: run windows would outlive pi with nobody to report to. Other reasons
 	// keep them; the shared state delivers results through the next instance.
 	pi.on("session_shutdown", (event) => {
+		clearInterval(state.widgetTimer);
+		state.widgetTimer = undefined;
 		if (event.reason !== "quit") return;
 		clearInterval(state.sweep);
 		for (const w of ownedWindows("@pi_name")) closeWindow(w.paneId);
@@ -323,6 +376,8 @@ ${command}
 					run.paneId = newPaneId;
 					runs.set(newPaneId, run);
 					watchers.set(newPaneId, channel);
+					state.ctx = ctx;
+					updateWidget();
 					// A runner that finished before this registers already set the channel; wait-for returns at once.
 					void api().exec("tmux", ["wait-for", channel])
 						.then((result) => {

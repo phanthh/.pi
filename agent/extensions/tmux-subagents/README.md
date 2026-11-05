@@ -41,7 +41,7 @@ watcher (1s): .exit → done/error;
               pane gone → .status (0 = closed, ≠0 = crash code)
 ```
 
-Widget:
+Widget (box from `@pi-ext/tmux-windows/widget`, also used by the `tmux` tool's window list):
 
 ```
 ╭─ Subagents ──────────────────────────────────── 2 running ─╮

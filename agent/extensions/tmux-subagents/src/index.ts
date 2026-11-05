@@ -10,7 +10,7 @@
  * Liveness comes from the child-written activity snapshot.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -28,6 +28,7 @@ import {
   sessionName,
   viaUserShell,
 } from "@pi-ext/tmux-windows";
+import { formatElapsedMMSS, renderBox } from "@pi-ext/tmux-windows/widget";
 import {
   allowedSpawns,
   csv,
@@ -321,16 +322,6 @@ let statusInterval: ReturnType<typeof setInterval> | null = null;
 
 // ── Widget ──
 
-const ACCENT = "\x1b[38;2;77;163;255m";
-const RST = "\x1b[0m";
-
-function formatElapsedMMSS(startTime: number): string {
-  const seconds = Math.floor((Date.now() - startTime) / 1000);
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
 export function formatWidgetRightLabel(snapshot: StatusSnapshot): string {
   if (snapshot.kind === "starting") return " starting… ";
   if (snapshot.kind === "active") {
@@ -348,50 +339,16 @@ export function formatWidgetRightLabel(snapshot: StatusSnapshot): string {
   return ` stalled${detail}${duration} `;
 }
 
-function borderLine(left: string, right: string, width: number): string {
-  if (width <= 0) return "";
-  if (width === 1) return `${ACCENT}│${RST}`;
-
-  const contentWidth = Math.max(0, width - 2);
-  const rightVis = visibleWidth(right);
-  if (rightVis >= contentWidth) {
-    const truncRight = truncateToWidth(right, contentWidth);
-    const rightPad = Math.max(0, contentWidth - visibleWidth(truncRight));
-    return `${ACCENT}│${RST}${truncRight}${" ".repeat(rightPad)}${ACCENT}│${RST}`;
-  }
-
-  const truncLeft = truncateToWidth(left, Math.max(0, contentWidth - rightVis));
-  const pad = Math.max(0, contentWidth - visibleWidth(truncLeft) - rightVis);
-  return `${ACCENT}│${RST}${truncLeft}${" ".repeat(pad)}${right}${ACCENT}│${RST}`;
-}
-
-function borderTop(title: string, info: string, width: number): string {
-  if (width <= 0) return "";
-  if (width === 1) return `${ACCENT}╭${RST}`;
-  const inner = Math.max(0, width - 2);
-  const titlePart = `─ ${title} `;
-  const infoPart = ` ${info} ─`;
-  const fill = "─".repeat(Math.max(0, inner - titlePart.length - infoPart.length));
-  const content = `${titlePart}${fill}${infoPart}`.slice(0, inner).padEnd(inner, "─");
-  return `${ACCENT}╭${content}╮${RST}`;
-}
-
-function borderBottom(width: number): string {
-  if (width <= 0) return "";
-  if (width === 1) return `${ACCENT}╰${RST}`;
-  return `${ACCENT}╰${"─".repeat(Math.max(0, width - 2))}╯${RST}`;
-}
-
 export function renderSubagentWidgetLines(agents: RunningSubagent[], width: number): string[] {
-  const lines: string[] = [borderTop("Subagents", `${agents.length} running`, width)];
-  for (const agent of agents) {
+  const rows = agents.map((agent) => {
     const agentTag = agent.agent ? ` (${agent.agent})` : "";
     const where = agent.tmuxSession ? ` @${agent.tmuxSession}` : "";
-    const left = ` ${formatElapsedMMSS(agent.startTime)}  ${agent.name}${agentTag}${where} `;
-    lines.push(borderLine(left, formatWidgetRightLabel(classifyStatus(agent.statusState, Date.now())), width));
-  }
-  lines.push(borderBottom(width));
-  return lines;
+    return {
+      left: ` ${formatElapsedMMSS(agent.startTime)}  ${agent.name}${agentTag}${where} `,
+      right: formatWidgetRightLabel(classifyStatus(agent.statusState, Date.now())),
+    };
+  });
+  return renderBox("Subagents", `${agents.length} running`, rows, width);
 }
 
 function updateWidget() {
