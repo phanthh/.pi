@@ -14,9 +14,11 @@ All defaults use `fg=#1a1b26`.
 
 ## Behavior
 
-- Each pi sets its state on its own pane: `@pi_indicator`.
+- Each pi sets its state on its own pane: `@pi_indicator` (`<state>` or `<state> dim`).
 - After each change, pi reads `@pi_indicator` from all panes of its window and sets the window
   `window-status-style`. Order: `waiting` > `error` > `running` > `idle`. Tie: lowest pane index.
+- Subagent children that are not leads (`PI_SUBAGENT_ID` set, `PI_SUBAGENT_LEAD` not set) add the
+  `dim` attribute. The top-level pi (depth 0) and lead children do not.
 - `window-status-current-style` is not changed. The focused tab keeps its normal style.
 - Quit: pi unsets its pane option and recomputes the window. No pi panes left: window option unset
   (global style applies). `/reload`, new, resume, fork: state is applied again on `session_start`.

@@ -540,6 +540,7 @@ export function buildChildScript(o: {
   env.push(`PI_SUBAGENT_NAME=${shellEscape(spec.name)}`);
   env.push(`PI_SUBAGENT_AGENT=${shellEscape(spec.agent)}`);
   if (spec.interactive) env.push("PI_SUBAGENT_INTERACTIVE=1");
+  if (spec.lead) env.push("PI_SUBAGENT_LEAD=1");
   env.push(`PI_SUBAGENT_SESSION=${shellEscape(o.sessionFile)}`);
   env.push(`PI_SUBAGENT_ID=${shellEscape(o.id)}`);
   env.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(o.activityFile)}`);

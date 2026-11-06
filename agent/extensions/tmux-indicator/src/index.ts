@@ -8,12 +8,14 @@ import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent"
 // Each pi publishes its state on its own pane (@pi_indicator); any pi in a window
 // recomputes the window style from all panes: waiting > error > running > idle,
 // ties → lowest pane index. window-status-current-style is left alone.
+// Non-lead subagent children (PI_SUBAGENT_ID set, PI_SUBAGENT_LEAD unset) add `dim`.
 
 type State = "waiting" | "error" | "running" | "idle";
 type Colors = Record<State, { bg: string; fg: string }>;
 
 const PRIORITY: State[] = ["waiting", "error", "running", "idle"];
 const PANE_OPT = "@pi_indicator";
+const DIM = process.env.PI_SUBAGENT_ID && process.env.PI_SUBAGENT_LEAD !== "1" ? "dim" : "";
 const DEFAULTS: Colors = {
 	running: { bg: "#e0af68", fg: "#1a1b26" },
 	waiting: { bg: "#bb9af7", fg: "#1a1b26" },
@@ -50,18 +52,24 @@ export default function tmuxIndicator(pi: ExtensionAPI) {
 	const sync = (state: State | undefined) => {
 		queue = queue
 			.then(async () => {
-				await tmux("set", "-p", ...(state ? [] : ["-u"]), "-t", pane, PANE_OPT, ...(state ? [state] : []));
+				// Pane value: "<state>" or "<state> dim".
+				const value = state && [state, DIM].filter(Boolean).join(" ");
+				await tmux("set", "-p", ...(value ? [] : ["-u"]), "-t", pane, PANE_OPT, ...(value ? [value] : []));
 				const lines = (await tmux("list-panes", "-t", pane, "-F", `#{pane_index} #{${PANE_OPT}}`)).split("\n");
 				let pick: State | undefined;
 				let pickIdx = Infinity;
+				let pickDim = false;
 				for (const line of lines) {
-					const [idx, s] = line.split(" ") as [string, State | undefined];
+					const [idx, s, dim] = line.split(" ") as [string, State | undefined, string | undefined];
 					if (!s || !PRIORITY.includes(s)) continue;
 					const better =
 						!pick || PRIORITY.indexOf(s) < PRIORITY.indexOf(pick) || (s === pick && Number(idx) < pickIdx);
-					if (better) [pick, pickIdx] = [s, Number(idx)];
+					if (better) [pick, pickIdx, pickDim] = [s, Number(idx), dim === "dim"];
 				}
-				if (pick) await tmux("set", "-w", "-t", pane, "window-status-style", `bg=${colors[pick].bg},fg=${colors[pick].fg}`);
+				if (pick) {
+					const style = `bg=${colors[pick].bg},fg=${colors[pick].fg}${pickDim ? ",dim" : ""}`;
+					await tmux("set", "-w", "-t", pane, "window-status-style", style);
+				}
 				else await tmux("set", "-w", "-u", "-t", pane, "window-status-style");
 			})
 			.catch(() => {});

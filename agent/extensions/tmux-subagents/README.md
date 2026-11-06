@@ -175,6 +175,7 @@ Policy (`policy.ts`), at any depth:
 | --- | --- |
 | `PI_SUBAGENT_ID`, `_NAME`, `_AGENT`, `_SESSION`, `_ACTIVITY_FILE` | set for every child |
 | `PI_SUBAGENT_INTERACTIVE=1` | interactive child (no auto-exit) |
+| `PI_SUBAGENT_LEAD=1` | lead child (own tmux session) |
 | `PI_ROOM` | room dir the child is a member of |
 | `PI_SUBAGENT_SPAWNS`, `PI_DENY_TOOLS` | policy, see above |
 | `PI_CODING_AGENT_DIR` | propagated; `cwd/.pi/agent` wins when present |
