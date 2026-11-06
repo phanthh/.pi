@@ -28,7 +28,7 @@ import {
   sessionName,
   viaUserShell,
 } from "@pi-ext/tmux-windows";
-import { formatElapsedMMSS, renderBox } from "@pi-ext/tmux-windows/widget";
+import { formatElapsedMMSS, renderBox, SECTION_ORDER, setStackSection } from "@pi-ext/tmux-windows/widget";
 import {
   allowedSpawns,
   csv,
@@ -355,7 +355,7 @@ function updateWidget() {
   if (!latestCtx?.hasUI) return;
 
   if (runningSubagents.size === 0) {
-    latestCtx.ui.setWidget("subagent-status", undefined);
+    setStackSection(latestCtx.ui, "subagent-status", SECTION_ORDER.subagents, undefined);
     if (widgetInterval) {
       clearInterval(widgetInterval);
       widgetInterval = null;
@@ -364,13 +364,8 @@ function updateWidget() {
     return;
   }
 
-  latestCtx.ui.setWidget(
-    "subagent-status",
-    () => ({
-      invalidate() {},
-      render: (width: number) => renderSubagentWidgetLines([...runningSubagents.values()], width),
-    }),
-    { placement: "aboveEditor" },
+  setStackSection(latestCtx.ui, "subagent-status", SECTION_ORDER.subagents, (width) =>
+    runningSubagents.size === 0 ? [] : renderSubagentWidgetLines([...runningSubagents.values()], width),
   );
 }
 

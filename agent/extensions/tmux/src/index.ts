@@ -23,7 +23,7 @@ import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-wo
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { closeWindow, createWindow, isPaneAlive, ownedWindows, userShell, viaUserShell } from "@pi-ext/tmux-windows";
-import { formatElapsedMMSS, renderBox } from "@pi-ext/tmux-windows/widget";
+import { formatElapsedMMSS, renderBox, SECTION_ORDER, setStackSection } from "@pi-ext/tmux-windows/widget";
 import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 import { registerResurrect } from "./resurrect.ts";
 
@@ -137,24 +137,18 @@ export default function (pi: ExtensionAPI) {
 			if (active().length === 0) {
 				clearInterval(state.widgetTimer);
 				state.widgetTimer = undefined;
-				ctx.ui.setWidget(WIDGET_KEY, undefined);
+				setStackSection(ctx.ui, WIDGET_KEY, SECTION_ORDER.tmux, undefined);
 				return;
 			}
-			ctx.ui.setWidget(
-				WIDGET_KEY,
-				() => ({
-					invalidate() {},
-					render: (width: number) => {
-						const list = active();
-						const rows = list.map((run) => ({
-							left: ` ${formatElapsedMMSS(run.started)}  ${run.pane} › ${run.command.replace(/\s+/g, " ")} `,
-							right: run.result ? " finishing " : " running ",
-						}));
-						return renderBox("tmux", `${list.length} running`, rows, width);
-					},
-				}),
-				{ placement: "aboveEditor" },
-			);
+			setStackSection(ctx.ui, WIDGET_KEY, SECTION_ORDER.tmux, (width) => {
+				const list = active();
+				if (list.length === 0) return [];
+				const rows = list.map((run) => ({
+					left: ` ${formatElapsedMMSS(run.started)}  ${run.pane} › ${run.command.replace(/\s+/g, " ")} `,
+					right: run.result ? " finishing " : " running ",
+				}));
+				return renderBox("tmux", `${list.length} running`, rows, width);
+			});
 		} catch {
 			// Stale ctx (session replaced); next session_start re-renders.
 			return;

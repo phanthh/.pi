@@ -55,6 +55,49 @@ function borderBottom(width: number): string {
   return `${ACCENT}╰${"─".repeat(Math.max(0, width - 2))}╯${RST}`;
 }
 
+/**
+ * Shared widget slot. pi orders widgets by last `setWidget` call, and both
+ * tmux-backed widgets re-set every second, so separate keys swap places.
+ * One key + fixed section order keeps the stack stable. Lower order renders
+ * higher. State lives on globalThis: each extension may load its own copy of
+ * this module.
+ */
+export const SECTION_ORDER = { tmux: 0, subagents: 1 } as const;
+
+const STACK_WIDGET_KEY = "tmux-stack";
+const STACK_STATE_KEY = Symbol.for("pi-tmux-windows/widget-stack");
+
+type SectionRender = (width: number) => string[];
+interface StackUi {
+  setWidget: (key: string, content: any, options?: { placement?: "aboveEditor" | "belowEditor" }) => void;
+}
+
+function sections(): Map<string, { order: number; render: SectionRender }> {
+  const g = globalThis as any;
+  g[STACK_STATE_KEY] ??= new Map();
+  return g[STACK_STATE_KEY];
+}
+
+/** Set (render) or clear (undefined) one section of the shared widget. May throw on stale ui. */
+export function setStackSection(ui: StackUi, id: string, order: number, render: SectionRender | undefined): void {
+  const map = sections();
+  if (render) map.set(id, { order, render });
+  else map.delete(id);
+  if (map.size === 0) {
+    ui.setWidget(STACK_WIDGET_KEY, undefined);
+    return;
+  }
+  ui.setWidget(
+    STACK_WIDGET_KEY,
+    () => ({
+      invalidate() {},
+      render: (width: number) =>
+        [...sections().values()].sort((a, b) => a.order - b.order).flatMap((section) => section.render(width)),
+    }),
+    { placement: "aboveEditor" },
+  );
+}
+
 export function renderBox(title: string, info: string, rows: BoxRow[], width: number): string[] {
   return [
     borderTop(title, info, width),
