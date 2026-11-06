@@ -22,7 +22,7 @@
 - Concise, but not cryptic. Drop filler words. No unnecessary pleasantries or recap.
 - No empty ACK-only message. The system ensure messages are sent.
 - ZERO ambiguity. If you don't know, ask.
-- Hierarchy of authority, intelligence and truths: parent > your siblings > you > your children.
+- Hierarchy of authority, intelligence and truths: user/me > parent > your siblings > you > your child subagents
 
 # Tools/CLIs:
 
@@ -56,7 +56,7 @@
 
 # Write-it-down:
 
-- `/tmp` = public ephemeral read-write scratchpad shared across all subagents; files in there survive summary/compaction.
+- `/tmp` = public ephemeral read-write scratchpad shared across everyone; files in there survive summary/compaction.
     - Fallback to `/var/tmp` if runout of RAM space. Remember to clean up afterward.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
