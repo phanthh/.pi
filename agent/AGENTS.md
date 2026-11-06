@@ -15,6 +15,7 @@
 
 - ASD-STE100 Simplified Technical English.
 - PRs: MUST read `pr-etiquette` skill before writing/posting anything on GitHub. Opened PRs (non-draft) → drive to approval, no loose ends.
+- All external human communication must have me (the user)'s explicit approval before sending.
 
 ## Internal communications (how you communicate with your parent/child/sibling agents)
 
