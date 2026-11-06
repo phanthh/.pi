@@ -18,6 +18,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 | [`project-skill-rules`](project-skill-rules/README.md) | Prompt hook | Filters project skills by working directory |
 | [`reload`](reload/README.md) | `reload_pi` tool | Reloads extensions and resources, then resumes work |
 | `tmux` | `tmux` tool + widget | Manages named windows for long-running processes; lists running ones above the editor |
+| [`tmux-indicator`](tmux-indicator/README.md) | tmux tab color | Colors the tmux window tab by agent state (running/waiting/error/idle) |
 | `tmux-windows` | Library | Owner-tagged tmux window/session helpers; shared bordered list widget + stacked slot (tmux box above subagents box) (`/widget`) |
 | [`tmux-subagents`](tmux-subagents/README.md) | `tmux_subagent` tool | Runs asynchronous pi subagents in tmux windows (lead agents: own session) |
 | [`ttsr`](ttsr/README.md) | Stream hook | Interrupts and retries responses that violate markdown rules |
