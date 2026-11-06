@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { SessionProjection } from "@earendil-works/pi-coding-agent";
 
-export const LIVE_CONTEXT_SKILL_PATH = fileURLToPath(new URL("../../../../skills/live_context/SKILL.md", import.meta.url));
+export const LIVE_CONTEXT_SKILL_PATH = fileURLToPath(new URL("../../skills/live-context/SKILL.md", import.meta.url));
 
 type ProjectedEntry = SessionProjection["entries"][number];
 type AgentMessage = SessionProjection["messages"][number];

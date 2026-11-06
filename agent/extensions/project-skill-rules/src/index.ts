@@ -161,8 +161,9 @@ export default function projectSkillRules(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const allowed = allowedFor(ctx.cwd, (message) => ctx.ui.notify(message, "error"));
+		// Extension-provided skills (`extension:*` source) are gated by their owning extension.
 		event.systemPromptOptions.skills = (event.systemPromptOptions.skills ?? []).filter((skill) =>
-			permits(allowed, skill.name),
+			skill.sourceInfo.source.startsWith("extension:") || permits(allowed, skill.name),
 		);
 	});
 

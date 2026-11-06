@@ -1,6 +1,6 @@
 # Project skill rules
 
-Explicit skill allowlists selected by working directory. A matching rule allows only the listed skills (by frontmatter `name`; Pi has no skill `title` field), including global `~/.pi/agent/skills/` ones. There is no blocklist and no implicit exemption.
+Explicit skill allowlists selected by working directory. A matching rule allows only the listed skills (by frontmatter `name`; Pi has no skill `title` field), including global `~/.pi/agent/skills/` ones. There is no blocklist. Only exemption: skills an extension injects into the system prompt with an `extension:*` source (for example `live-context` from `context`); their owning extension gates them.
 
 Configure `~/.pi/agent/project-skill-rules.json`:
 

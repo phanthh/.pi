@@ -106,7 +106,7 @@ export function analyzeSystemPrompt(
 
 	const footer = findBasePromptFooter(systemPrompt, options.cwd);
 	const base = footer === undefined ? systemPrompt : systemPrompt.slice(0, footer.start);
-	const liveSpan = findDelimitedSpan(systemPrompt, "<live_context>", "</live_context>");
+	const liveSpan = findDelimitedSpan(systemPrompt, "<live-context>", "</live-context>");
 	if (liveSpan !== undefined && liveSpan.end <= base.length) carvedSpans.push(liveSpan);
 
 	const usesCustomPrompt = options.customPrompt !== undefined && options.customPrompt.length > 0;

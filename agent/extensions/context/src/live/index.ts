@@ -5,8 +5,11 @@ import {
   type ExtensionContext,
   type SessionBoundaryDraft,
   type SessionProjection,
+  type Skill,
   estimateTokens,
+  loadSkillsFromDir,
 } from "@earendil-works/pi-coding-agent";
+import { dirname } from "node:path";
 import { loadConfig } from "../config.ts";
 import { normalizeInlineText } from "../view/text.ts";
 import { liveBudget, liveTokens, pressureLevel } from "./budget.ts";
@@ -15,6 +18,9 @@ import { CHECKPOINT_TYPE, RESET_TYPE, createCheckpoint, latestCheckpoint, projec
 import { openMirror, type MirrorStorage } from "./storage.ts";
 
 const SWITCH_TYPE = "context.live.enabled";
+const LIVE_CONTEXT_SKILL_NAME = "live-context";
+/** `extension:` sources are exempt from project-skill-rules allowlists. */
+const LIVE_CONTEXT_SKILL_SOURCE = "extension:context";
 const RECEIPT_TYPE = "context.live.receipt";
 const NUDGE_TYPE = "context.live.pressure";
 
@@ -151,11 +157,11 @@ export function registerLiveContext(pi: ExtensionAPI): LiveContextRuntime {
     instructions: (ctx) => {
       const mirror = ensure(ctx);
       if (!mirror) return undefined;
-      return `<live_context>
+      return `<live-context>
 Your active conversation is mirrored to ${JSON.stringify(mirror.path)}.
 Read ${JSON.stringify(LIVE_CONTEXT_SKILL_PATH)} before interacting with live context; follow that skill for inspection, editing, and compaction.
 ${lastResult ? `- Last status: ${lastResult}` : ""}
-</live_context>`;
+</live-context>`;
     },
     status: (ctx) => {
       const branch = ctx.sessionManager.getBranch();
@@ -192,6 +198,17 @@ ${lastResult ? `- Last status: ${lastResult}` : ""}
       return mirror.writeRevisions(revisionText(ctx.sessionManager.getBranch()));
     },
   };
+
+  // Skill is listed in the system prompt only while live context is enabled for this session.
+  let skill: Skill | undefined;
+  pi.on("before_agent_start", (event, ctx) => {
+    const options = event.systemPromptOptions;
+    const others = (options.skills ?? []).filter((entry) => entry.name !== LIVE_CONTEXT_SKILL_NAME);
+    if (!enabled(ctx)) { options.skills = others; return; }
+    skill ??= loadSkillsFromDir({ dir: dirname(dirname(LIVE_CONTEXT_SKILL_PATH)), source: LIVE_CONTEXT_SKILL_SOURCE })
+      .skills.find((entry) => entry.name === LIVE_CONTEXT_SKILL_NAME);
+    options.skills = skill ? [...others, skill] : others;
+  });
 
   pi.on("session_start", (_event, ctx) => { lastResult = undefined; runtime.reload(ctx); });
   pi.on("session_tree", (_event, ctx) => {

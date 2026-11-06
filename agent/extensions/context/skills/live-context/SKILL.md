@@ -5,7 +5,7 @@ description: Inspect, edit, or compact active conversation through its live-cont
 
 # Live context
 
-The `<live_context>` system-prompt block names the current mirror file and its last status. This skill is the source of truth for interacting with that file, including the instructions referenced by its document header.
+The `<live-context>` system-prompt block names the current mirror file and its last status. This skill is the source of truth for interacting with that file, including the instructions referenced by its document header.
 
 ## Scope and lifecycle
 
@@ -14,7 +14,7 @@ The `<live_context>` system-prompt block names the current mirror file and its l
 - Edits apply immediately after the completed tool batch at `turn_end`, before the next model request. They do not change the already-running request. Text appended after export is retained automatically.
 - Make one batched mirror write per turn. This is an atomicity rule, not a request for one global summary: use multiple disjoint replacements/removals in one `edit` call or one script write. Read-only inspection does not count.
 - Valid edits must fit the effective input budget, including the receipt.
-- Confirm acceptance through the next `[Live context: applied ...]` receipt or `Last status` in `<live_context>`. Rejection leaves context unchanged and saves the draft to `rejected.md`; use the reported reason, not an assumption that the write succeeded.
+- Confirm acceptance through the next `[Live context: applied ...]` receipt or `Last status` in `<live-context>`. Rejection leaves context unchanged and saves the draft to `rejected.md`; use the reported reason, not an assumption that the write succeeded.
 - Interrupted turns never apply edits. New requests, branch changes, reload, and session shutdown discard pending drafts and refresh from canonical state.
 
 ## Document format and authority

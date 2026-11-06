@@ -207,7 +207,7 @@ export function registerContextView(pi: ExtensionAPI, om: OmRuntime, live?: Live
 			// Pi clears run-only prompt overrides before commands can inspect them.
 			const liveInstructions = live?.instructions(ctx);
 			const current = buildNativeSnapshot({
-				systemPrompt: liveInstructions !== undefined && !systemPrompt.includes("<live_context>\n")
+				systemPrompt: liveInstructions !== undefined && !systemPrompt.includes("<live-context>\n")
 					? `${systemPrompt}\n\n${liveInstructions}` : systemPrompt,
 				options: ctx.getSystemPromptOptions(),
 				allTools: pi.getAllTools(),
