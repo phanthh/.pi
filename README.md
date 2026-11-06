@@ -10,7 +10,7 @@ This is a working dotfiles repo, not a stable distribution. Review every extensi
 - LSP, web search/fetch, structured questions, and typed code execution
 - tmux-backed processes and asynchronous subagents
 - Bash guardrails, goal tracking, hot reload, and stream-time rules
-- Stacked-PR and decision-grilling skills
+- Stacked-PR, decision-grilling, and codebase-improvement skills
 
 See [agent/extensions](agent/extensions/README.md) for the full extension list and [agent](agent/README.md) for config details.
 
