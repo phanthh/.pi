@@ -1,9 +1,8 @@
 /**
  * lsp — code intelligence tool (definition/references/hover/symbols/call hierarchy/diagnostics).
- * Servers spawn lazily per (server, root), live for the session. edit/write results push didChange
- * to already-running servers only.
+ * Servers spawn lazily per (server, explicit root), watch disk changes, and live for the session.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -26,7 +25,7 @@ import {
 	type WorkspaceEdit,
 } from "vscode-languageserver-protocol";
 import { type Client, createClient } from "./client.ts";
-import { findRoot, loadServers, resolveForRoot, which } from "./servers.ts";
+import { loadServers, resolveForRoot, which } from "./servers.ts";
 
 const OPERATIONS = [
 	"goToDefinition",
@@ -68,28 +67,41 @@ const DESCRIPTION = `Language Server Protocol code intelligence. Operations:
 - documentSymbol: all symbols in filePath
 - workspaceSymbol: project-wide symbols matching query (filePath only selects which server; empty query = all)
 - diagnostics: current errors/warnings for filePath (call after editing to verify)
-Servers start lazily per project root: nearest marker dir (pyproject.toml, tsconfig.json, ...) between file and cwd, else cwd. Pass root to override (e.g. files in a git worktree outside cwd). Builtin servers: typescript, pyright, gopls, rust-analyzer builtin; extend via ~/.pi/agent/lsp.json or .pi/lsp.json). Errors if no server for the file type or binary not installed.`;
+Every operation requires root: absolute or cwd-relative project root dir containing pyproject.toml, tsconfig.json, go.mod, or Cargo.toml; for git worktrees pass the worktree's project dir. Files outside root are allowed and use that root's server/config/venv. Servers start lazily per root, watch disk changes, and restart pyright when its resolved interpreter changes. Builtin servers: typescript, pyright, gopls, rust-analyzer; extend via ~/.pi/agent/lsp.json or <root>/.pi/lsp.json. Errors if no server for the file type or binary not installed.`;
 
 export default function (pi: ExtensionAPI) {
 	const clients = new Map<string, Promise<Client>>();
 	const broken = new Map<string, string>();
+	const pythonPaths = new Map<string, string | undefined>();
 
 	function shutdownAll() {
 		for (const c of clients.values()) c.then((client) => client.shutdown()).catch(() => {});
 		clients.clear();
 		broken.clear();
+		pythonPaths.clear();
 	}
 
-	/** Clients for file; spawns missing ones. Throws if no server matches ext or binary missing. */
-	async function clientsFor(file: string, cwd: string, rootOverride?: string): Promise<Client[]> {
+	/** Files may be outside root: interpreter/config always come from the explicit root. */
+	async function clientsFor(file: string, root: string): Promise<Client[]> {
 		const ext = extname(file);
-		const servers = loadServers(rootOverride ?? cwd).filter((s) => s.extensions.includes(ext));
+		const servers = loadServers(root).filter((s) => s.extensions.includes(ext));
 		if (!servers.length) throw new Error(`No LSP server configured for "${ext}" files.`);
 		const result = await Promise.all(
 			servers.map((base) => {
-				const root = rootOverride ?? findRoot(file, base.roots, cwd);
 				const server = resolveForRoot(base, root);
 				const key = `${server.id}:${root}`;
+				const pythonPath = (server.initialization as { python?: { pythonPath?: string } } | undefined)?.python?.pythonPath;
+				let retiring: Promise<string[]> = Promise.resolve([]);
+				if (server.id === "pyright" && pythonPaths.has(key) && pythonPaths.get(key) !== pythonPath) {
+					retiring = clients.get(key)?.then((c) => {
+						const files = c.openFiles();
+						c.shutdown();
+						return files;
+					}).catch(() => []) ?? retiring;
+					clients.delete(key);
+					broken.delete(key);
+				}
+				pythonPaths.set(key, pythonPath);
 				if (broken.has(key)) throw new Error(broken.get(key));
 				const existing = clients.get(key);
 				if (existing) return existing;
@@ -98,10 +110,18 @@ export default function (pi: ExtensionAPI) {
 					broken.set(key, msg);
 					throw new Error(msg);
 				}
-				const pending = createClient(server, root).catch((err) => {
-					clients.delete(key);
+				const pending = retiring.then(async (files) => {
+					const client = await createClient(server, root);
+					for (const file of files) {
+						try { client.open(file); } catch {} // A document may have been deleted during restart.
+					}
+					return client;
+				}).catch((err) => {
 					const msg = `LSP server "${server.id}" failed to start: ${err instanceof Error ? err.message : String(err)}`;
-					broken.set(key, msg);
+					if (clients.get(key) === pending) {
+						clients.delete(key);
+						broken.set(key, msg);
+					}
 					throw new Error(msg);
 				});
 				clients.set(key, pending);
@@ -115,17 +135,17 @@ export default function (pi: ExtensionAPI) {
 	async function runningFor(file: string): Promise<Client[]> {
 		const ext = extname(file);
 		const all = await Promise.all([...clients.values()].map((p) => p.catch(() => undefined)));
-		return all.filter((c): c is Client => !!c && file.startsWith(c.root) && loadServers(c.root).some((s) => s.id === c.id && s.extensions.includes(ext)));
+		return all.filter((c): c is Client => !!c && c.tracks(file) && loadServers(c.root).some((s) => s.id === c.id && s.extensions.includes(ext)));
 	}
 
 	pi.on("session_shutdown", () => shutdownAll());
 
-	pi.on("tool_result", async (event) => {
+	pi.on("tool_result", async (event, ctx) => {
 		if (event.toolName !== "edit" && event.toolName !== "write") return;
 		if (event.isError) return;
 		const input = event.input as { path?: string };
 		if (!input.path) return;
-		const file = resolve(input.path);
+		const file = resolve(ctx.cwd, input.path);
 		if (!existsSync(file)) return;
 		for (const client of await runningFor(file)) {
 			try {
@@ -146,9 +166,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			operation: Type.Unsafe<(typeof OPERATIONS)[number]>({ type: "string", enum: [...OPERATIONS] }),
 			filePath: Type.String({ description: "Absolute or cwd-relative file path" }),
-			root: Type.Optional(
-				Type.String({ description: "Project root dir override (absolute or cwd-relative), e.g. worktree backend dir. Default: nearest marker dir up to cwd, else cwd" }),
-			),
+			root: Type.String({ minLength: 1, description: "Required project root (absolute or cwd-relative): dir with pyproject.toml/tsconfig.json/go.mod/Cargo.toml. For git worktrees pass the worktree's project dir. Files outside root use its server/venv." }),
 			line: Type.Optional(Type.Integer({ minimum: 1, description: "1-based line (positional ops)" })),
 			character: Type.Optional(Type.Integer({ minimum: 1, description: "1-based column (positional ops)" })),
 			query: Type.Optional(Type.String({ description: "workspaceSymbol query; empty = all" })),
@@ -165,13 +183,10 @@ export default function (pi: ExtensionAPI) {
 			if (params.operation === "rename" && !params.newName) throw new Error("rename requires newName");
 			if (params.operation === "renameFile" && !params.newPath) throw new Error("renameFile requires newPath");
 
-			let root: string | undefined;
-			if (params.root) {
-				root = resolve(ctx.cwd, params.root);
-				if (!existsSync(root)) throw new Error(`Root not found: ${root}`);
-				if (relative(root, file).startsWith("..")) throw new Error(`File ${file} is outside root ${root}`);
-			}
-			const clients = await clientsFor(file, ctx.cwd, root);
+			if (!params.root?.trim()) throw new Error("root is required: pass the project directory explicitly");
+			const root = resolve(ctx.cwd, params.root);
+			if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`Root is not a directory: ${root}`);
+			const clients = await clientsFor(file, root);
 			await Promise.all(clients.map((c) => c.idle()));
 			const uri = pathToFileURL(file).href;
 			const textDocument = { uri };
@@ -184,7 +199,7 @@ export default function (pi: ExtensionAPI) {
 				const items = reports.flatMap((r) => r ?? []);
 				const notes = clients.flatMap((c, i) => [
 					...(reports[i] === undefined ? [`${c.id}: no diagnostics report received in time (server may still be analyzing); this is NOT a clean result. Retry.`] : []),
-					...(c.warning ? [c.warning] : []),
+					...c.warnings(),
 				]);
 				const text = [formatDiagnostics(items, rel(file)), ...notes.map((n) => `Note: ${n}`)].join("\n");
 				return { content: [{ type: "text", text }], details: { count: items.length } };
@@ -255,11 +270,13 @@ export default function (pi: ExtensionAPI) {
 						// unsupported servers reject → plain move
 						const edit = await client.request<WorkspaceEdit | null>("workspace/willRenameFiles", { files }).catch(() => null);
 						const touched = edit ? client.applyEdit(edit) : [];
-						client.close(file);
+						for (const c of clients) c.close(file);
 						mkdirSync(dirname(to), { recursive: true });
 						renameSync(file, to);
-						client.notify("workspace/didRenameFiles", { files });
-						client.open(to);
+						for (const c of clients) {
+							c.notify("workspace/didRenameFiles", { files });
+							c.open(to);
+						}
 						const others = touched.filter((f) => f !== file);
 						return `Moved ${rel(file)} → ${rel(to)}${others.length ? `, updated imports in:\n${others.map(rel).join("\n")}` : ""}`;
 					}
@@ -284,7 +301,8 @@ export default function (pi: ExtensionAPI) {
 				return "";
 			})();
 
-			return { content: [{ type: "text", text: text || `No results for ${params.operation}` }], details: {} };
+			const notes = clients.flatMap((c) => c.warnings()).map((n) => `Note: ${n}`);
+			return { content: [{ type: "text", text: [text || `No results for ${params.operation}`, ...notes].join("\n") }], details: {} };
 		},
 
 		renderCall(args, theme) {

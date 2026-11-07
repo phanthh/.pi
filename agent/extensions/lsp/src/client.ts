@@ -2,11 +2,12 @@
  * One LSP client per (server, root). JSON-RPC over stdio.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { existsSync, type FSWatcher, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { dirname, extname, isAbsolute, matchesGlob, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createProtocolConnection, StreamMessageReader, StreamMessageWriter } from "vscode-languageserver-protocol/node";
-import type { Diagnostic, DocumentDiagnosticReport, InitializeResult, ProtocolConnection, TextEdit, WorkspaceEdit } from "vscode-languageserver-protocol";
+import type { Diagnostic, DocumentDiagnosticReport, FileSystemWatcher, InitializeResult, ProtocolConnection, Registration, TextEdit, Unregistration, WorkspaceEdit } from "vscode-languageserver-protocol";
 import type { ServerDef } from "./servers.ts";
 
 const INIT_TIMEOUT_MS = 45_000;
@@ -16,12 +17,24 @@ const PUSH_WAIT_MS = 15_000;
 const PUSH_DEBOUNCE_MS = 150;
 const IDLE_TIMEOUT_MS = 60_000;
 const IDLE_QUIET_MS = 300;
+const WATCH_DEBOUNCE_MS = 200;
+const MAX_WATCHERS = 5_000;
+const IGNORED_DIRS = /^(?:node_modules|\.git|dist|build|__pycache__|\.next|\.turbo|target|\.mypy_cache|\.pytest_cache)$/;
+
+function within(root: string, file: string) {
+	const rel = relative(root, file);
+	return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
 
 export interface Client {
 	id: string;
 	root: string;
-	/** Caveat for every result from this server (see ServerDef.warning). */
-	warning?: string;
+	/** Persistent server caveats plus one-time filesystem watcher warning. */
+	warnings(): string[];
+	/** Root membership or an explicitly opened outside-root document. */
+	tracks(file: string): boolean;
+	/** Preserve explicitly opened documents across interpreter restarts. */
+	openFiles(): string[];
 	/** Sync file content from disk to server (didOpen / didChange). Returns true if server saw a change. */
 	open(file: string): boolean;
 	/** didClose + forget file (deleted/renamed away). */
@@ -60,10 +73,46 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 	let pullSupported = false;
 	const progress = new Set<string | number>();
 	const idleListeners = new Set<() => void>();
+	const registrations = new Map<string, FileSystemWatcher[]>();
+	const watchers = new Map<string, FSWatcher>();
+	const recursiveDirs = new Set<string>();
+	const scans = new Map<string, FSWatcher>();
+	const changes = new Map<string, number>();
+	const changedDirs = new Set<string>();
+	const watchWarnings: string[] = [];
+	let watchWarned = false;
+	let stopped = false;
+	let shuttingDown = false;
+	let watchTimer: ReturnType<typeof setTimeout> | undefined;
 
-	conn.onNotification("textDocument/publishDiagnostics", (params: { uri: string; diagnostics: Diagnostic[] }) => {
+	function notify(method: string, params: unknown) {
+		if (!stopped) void conn.sendNotification(method, params).catch(() => {});
+	}
+
+	function warnWatch(err: unknown) {
+		if (watchWarned) return;
+		watchWarned = true;
+		watchWarnings.push(`${server.id}: filesystem watching degraded for ${root}: ${err instanceof Error ? err.message : String(err)}. External changes may be missed; explicit LSP calls still sync the requested file.`);
+	}
+
+	function stopWatching() {
+		stopped = true;
+		clearTimeout(watchTimer);
+		watchTimer = undefined;
+		changes.clear();
+		changedDirs.clear();
+		for (const watcher of watchers.values()) watcher.close();
+		watchers.clear();
+		recursiveDirs.clear();
+		scans.clear();
+	}
+	proc.once("exit", stopWatching);
+	conn.onClose(stopWatching);
+
+	conn.onNotification("textDocument/publishDiagnostics", (params: { uri: string; version?: number; diagnostics: Diagnostic[] }) => {
 		if (!params.uri.startsWith("file://")) return;
-		const file = decodeURIComponent(new URL(params.uri).pathname);
+		const file = fileURLToPath(params.uri);
+		if (params.version !== undefined && files[file] && params.version < files[file].version) return;
 		pushed[file] = { at: Date.now(), items: params.diagnostics };
 		for (const l of pushListeners) l(file);
 	});
@@ -73,10 +122,17 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 			return item.section ? (init?.[item.section] ?? null) : (init ?? null);
 		}),
 	);
-	conn.onRequest("client/registerCapability", (params: { registrations: { method: string }[] }) => {
-		if (params.registrations.some((r) => r.method === "textDocument/diagnostic")) pullSupported = true;
+	conn.onRequest("client/registerCapability", (params: { registrations: Registration[] }) => {
+		for (const r of params.registrations) {
+			if (r.method === "textDocument/diagnostic") pullSupported = true;
+			if (r.method === "workspace/didChangeWatchedFiles") registrations.set(r.id, r.registerOptions?.watchers ?? []);
+		}
+		return null;
 	});
-	conn.onRequest("client/unregisterCapability", () => null);
+	conn.onRequest("client/unregisterCapability", (params: { unregisterations: Unregistration[] }) => {
+		for (const r of params.unregisterations) registrations.delete(r.id);
+		return null;
+	});
 	conn.onRequest("window/workDoneProgress/create", (params: { token: string | number }) => {
 		progress.add(params.token);
 		return null;
@@ -107,6 +163,7 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 					window: { workDoneProgress: true },
 					workspace: {
 						configuration: true,
+						didChangeWatchedFiles: { dynamicRegistration: true, relativePatternSupport: true },
 						workspaceFolders: true,
 						applyEdit: true,
 						workspaceEdit: { documentChanges: true, resourceOperations: ["create", "rename", "delete"] },
@@ -134,33 +191,191 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 		]),
 		INIT_TIMEOUT_MS,
 		`${server.id} initialize`,
-	);
+	).catch((err) => {
+		stopWatching();
+		conn.dispose();
+		proc.kill();
+		throw err;
+	});
 	if (init.capabilities.diagnosticProvider) pullSupported = true;
 	await conn.sendNotification("initialized", {});
 	if (server.initialization) await conn.sendNotification("workspace/didChangeConfiguration", { settings: server.initialization });
 
 	const languageId = (file: string) => LANGUAGE_BY_EXT[file.slice(file.lastIndexOf("."))] ?? "plaintext";
 
+	function wantsEvent(file: string, type: number) {
+		if (!registrations.size) return true; // No registration: send all non-ignored changes.
+		return [...registrations.values()].flat().some((w) => {
+			if (!((w.kind ?? 7) & (type === 3 ? 4 : type))) return false;
+			// matchesGlob excludes dot segments; LSP globs do not. Conservatively over-notify those paths.
+			if (relative(root, file).split(sep).some((part) => part.startsWith(".") && part !== "..")) return true;
+			try {
+				if (typeof w.globPattern === "string") return matchesGlob(file, w.globPattern) || matchesGlob(relative(root, file), w.globPattern);
+				const { baseUri, pattern } = w.globPattern;
+				const base = fileURLToPath(typeof baseUri === "string" ? baseUri : baseUri.uri);
+				return within(base, file) && matchesGlob(relative(base, file), pattern);
+			} catch {
+				return true; // Unsupported server glob: over-notify rather than miss changes.
+			}
+		});
+	}
+
+	function invalidateDiagnostics() {
+		for (const file of Object.keys(pushed)) delete pushed[file];
+	}
+
+	function flushChanges() {
+		clearTimeout(watchTimer);
+		watchTimer = undefined;
+		if (stopped || !changes.size) return;
+		const batch = [...changes];
+		const dirs = new Set(changedDirs);
+		changes.clear();
+		changedDirs.clear();
+		// Directory changes can affect matching descendants even if the directory itself misses the glob.
+		const watched = batch.filter(([file, type]) => dirs.has(file) || wantsEvent(file, type));
+		// Invalidate dependents for forwarded source changes or registered server interests, not arbitrary logs.
+		if (watched.some(([file]) => !files[file] && (registrations.size > 0 || dirs.has(file) || server.extensions.includes(extname(file))))) invalidateDiagnostics();
+		for (const file of Object.keys(files)) {
+			if (!batch.some(([changed]) => within(changed, file))) continue;
+			try {
+				open(file); // Duplicate events for already-synced text do not invalidate fresh reports.
+			} catch (err) {
+				delete pushed[file];
+				if (!existsSync(file)) close(file);
+				else warnWatch(err);
+			}
+		}
+		const events = watched.map(([file, type]) => ({ uri: pathToFileURL(file).href, type }));
+		if (events.length) notify("workspace/didChangeWatchedFiles", { changes: events });
+	}
+
+	function ignored(file: string) {
+		const parts = relative(root, file).split(sep);
+		return parts.some((part, i) => IGNORED_DIRS.test(part) || ((part === ".venv" || part === "venv") && i < parts.length - 1));
+	}
+
+	function queueChange(file: string, type: number, directory = false) {
+		if (ignored(file) && !files[file] && !(directory && Object.keys(files).some((f) => within(file, f)))) return;
+		changes.set(file, changes.get(file) === 1 && type === 2 ? 1 : type);
+		if (directory) changedDirs.add(file);
+		watchTimer ??= setTimeout(flushChanges, WATCH_DEBOUNCE_MS);
+	}
+
+	function closeTree(dir: string) {
+		for (const [path, watcher] of watchers) {
+			if (!within(dir, path)) continue;
+			watcher.close();
+			watchers.delete(path);
+			recursiveDirs.delete(path);
+			scans.delete(path);
+		}
+	}
+
+	async function scanDirectory(dir: string, initial: boolean) {
+		const owner = watchers.get(dir);
+		if (!owner || scans.get(dir) === owner) return;
+		scans.set(dir, owner);
+		try {
+			const entries = await readdir(dir, { withFileTypes: true });
+			for (let i = 0; i < entries.length; i++) {
+				if (i % 100 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+				if (stopped || watchers.get(dir) !== owner) return;
+				const entry = entries[i];
+				const file = resolve(dir, entry.name);
+				if (ignored(file)) continue;
+				if (!initial) queueChange(file, 1, entry.isDirectory());
+				if (entry.isDirectory()) watchDirectory(file, true, initial);
+			}
+		} catch (err) {
+			if (watchers.get(dir) !== owner) return;
+			if (!existsSync(dir)) closeTree(dir);
+			else warnWatch(err);
+		} finally {
+			if (scans.get(dir) === owner) scans.delete(dir);
+		}
+	}
+
+	// Explicit recursion prunes heavy trees and catches allocation errors when new directories appear.
+	// Node's native recursive watcher can throw ENOSPC from an internal callback instead of emitting error.
+	function watchDirectory(dir: string, recursive: boolean, initial = true) {
+		if (stopped) return;
+		if (watchers.has(dir)) {
+			if (recursive && !recursiveDirs.has(dir)) {
+				recursiveDirs.add(dir);
+				void scanDirectory(dir, initial);
+			}
+			return;
+		}
+		if (watchers.size >= MAX_WATCHERS) {
+			warnWatch(new Error(`watcher limit (${MAX_WATCHERS}) reached`));
+			return;
+		}
+		try {
+			const watcher = watch(dir, (event, name) => {
+				try {
+					if (!existsSync(dir)) {
+						queueChange(dir, 3, true);
+						closeTree(dir);
+						if (dir === root) warnWatch(new Error("root directory removed"));
+						return;
+					}
+					const file = name ? resolve(dir, name) : dir;
+					if (!recursiveDirs.has(dir) && !files[file]) return;
+					if (ignored(file) && !files[file]) return;
+					const stats = lstatSync(file, { throwIfNoEntry: false });
+					const directory = stats?.isDirectory() || recursiveDirs.has(file);
+					queueChange(file, !stats ? 3 : event === "change" ? 2 : 1, directory);
+					if (event === "rename" && recursiveDirs.has(dir)) {
+						if (!name) void scanDirectory(dir, false);
+						else if (directory) {
+							closeTree(file); // Reattach after atomic directory replacement or move.
+							if (stats?.isDirectory()) watchDirectory(file, true, false);
+						}
+					}
+				} catch (err) { warnWatch(err); }
+			});
+			watchers.set(dir, watcher);
+			if (recursive) recursiveDirs.add(dir);
+			watcher.unref();
+			watcher.on("error", (err) => {
+				closeTree(dir);
+				warnWatch(err);
+			});
+			if (recursive) void scanDirectory(dir, initial);
+		} catch (err) { warnWatch(err); }
+	}
+	watchDirectory(root, true);
+
 	function open(file: string) {
 		const text = readFileSync(file, "utf-8");
 		const uri = pathToFileURL(file).href;
 		const prev = files[file];
+		watchDirectory(dirname(file), false); // Also covers explicitly opened files in ignored trees.
 		if (!prev) {
+			delete pushed[file];
 			files[file] = { version: 0, text };
-			conn.sendNotification("textDocument/didOpen", { textDocument: { uri, languageId: languageId(file), version: 0, text } });
+			notify("textDocument/didOpen", { textDocument: { uri, languageId: languageId(file), version: 0, text } });
 			return true;
 		}
 		if (prev.text === text) return false;
+		invalidateDiagnostics();
 		prev.version += 1;
 		prev.text = text;
-		conn.sendNotification("textDocument/didChange", { textDocument: { uri, version: prev.version }, contentChanges: [{ text }] });
+		notify("textDocument/didChange", { textDocument: { uri, version: prev.version }, contentChanges: [{ text }] });
 		return true;
 	}
 
 	function close(file: string) {
 		if (!files[file]) return;
 		delete files[file];
-		conn.sendNotification("textDocument/didClose", { textDocument: { uri: pathToFileURL(file).href } });
+		delete pushed[file];
+		const dir = dirname(file);
+		if (!recursiveDirs.has(dir) && !Object.keys(files).some((f) => dirname(f) === dir)) {
+			watchers.get(dir)?.close();
+			watchers.delete(dir);
+		}
+		notify("textDocument/didClose", { textDocument: { uri: pathToFileURL(file).href } });
 	}
 
 	function applyEdit(edit: WorkspaceEdit) {
@@ -219,13 +434,16 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 	return {
 		id: server.id,
 		root,
-		warning: server.warning,
+		warnings: () => [...(server.warning ? [server.warning] : []), ...watchWarnings.splice(0)],
+		tracks: (file) => within(root, file) || !!files[file],
+		openFiles: () => Object.keys(files),
 		open,
 		close,
 		idle,
-		notify: (method, params) => void conn.sendNotification(method, params),
+		notify,
 		request: (method, params) => timeout(conn.sendRequest(method, params), REQUEST_TIMEOUT_MS, `${server.id} ${method}`),
 		async diagnostics(file) {
+			flushChanges();
 			const since = Date.now();
 			const changed = open(file);
 			if (pullSupported) {
@@ -234,13 +452,20 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 					REQUEST_TIMEOUT_MS,
 					`${server.id} textDocument/diagnostic`,
 				);
-				return report.kind === "full" ? report.items : (pushed[file]?.items ?? []);
+				return report.kind === "full" ? report.items : pushed[file]?.items;
 			}
 			if (!changed && pushed[file]) return pushed[file].items;
+			if (!changed) {
+				close(file);
+				open(file); // Ask push-only servers to recompute after dependency/cache invalidation.
+			}
 			return waitForPush(file, since);
 		},
 		applyEdit,
 		shutdown() {
+			if (shuttingDown) return;
+			shuttingDown = true;
+			stopWatching();
 			conn
 				.sendRequest("shutdown")
 				.then(() => conn.sendNotification("exit"))
