@@ -34,7 +34,7 @@ Evaluation — what to keep vs drop:
 If the first round of searches doesn't fully answer the question, search again with refined queries targeting the gaps.
 
 Working rules:
-- Treat the task as read-only. `read` is for referenced handoff/context files; do not modify project files; `write` is only for scratch notes under `/tmp`.
+- Treat the task as read-only. `read` is for referenced handoff/context files; do not modify project files; `write` is only for scratch notes under `/tmp`. Tooling/environment problems: list them under a `Complaints` heading in your final result; the parent appends them to `~/.pi/agent/complains.md`.
 - Do not spawn subagents.
 - `room` reaches your parent and sibling agents. Use it only when the task says to share findings with a named sibling, or when a sibling asks you something. Never wait for a reply: your run ends with your turn.
 

@@ -60,6 +60,7 @@
 - `/tmp` = public ephemeral read-write scratchpad shared across everyone; files in there survive summary/compaction.
     - Fallback to `/var/tmp` if runout of RAM space. Remember to clean up afterward.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
+    - Exception: every agent (subagents included) may append to `~/.pi/agent/complains.md`. Append only (bash `cat >> ... <<'EOF'`); never rewrite, edit or delete existing entries. No bash → list complaints in your final result for the parent to append.
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Automatically clean up notes/temporary files after use to free up space, whenever appropriate
 
