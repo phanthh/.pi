@@ -44,6 +44,8 @@ export interface PollResult {
   reason: "done" | "error" | "closed";
   exitCode: number;
   errorMessage?: string;
+  summary?: string;
+  handedOverWindows?: string[];
 }
 
 /** Decode the `.exit` sidecar written by subagent_done / the child error path. */
@@ -55,7 +57,13 @@ export function interpretExitSidecar(data: any): PollResult {
         : "Subagent exited with stopReason=error (no errorMessage in sidecar).";
     return { reason: "error", exitCode: 1, errorMessage };
   }
-  return { reason: "done", exitCode: 0 };
+  return {
+    reason: "done", exitCode: 0,
+    ...(typeof data?.summary === "string" && data.summary.trim() ? { summary: data.summary } : {}),
+    handedOverWindows: Array.isArray(data?.handedOverWindows)
+      ? data.handedOverWindows.filter((name: unknown): name is string => typeof name === "string")
+      : [],
+  };
 }
 
 function readExitSidecar(sessionFile: string): PollResult | null {

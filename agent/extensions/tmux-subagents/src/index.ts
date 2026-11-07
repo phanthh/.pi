@@ -537,6 +537,7 @@ export function buildChildScript(o: {
   if (spec.agentDir) env.push(`PI_CODING_AGENT_DIR=${shellEscape(spec.agentDir)}`);
   if (spec.denyTools.length > 0) env.push(`PI_DENY_TOOLS=${shellEscape(spec.denyTools.join(","))}`);
   if (spec.spawns) env.push(`PI_SUBAGENT_SPAWNS=${shellEscape(spec.spawns.join(","))}`);
+  env.push(`PI_SUBAGENT_PARENT_PANE=${shellEscape(process.env.TMUX_PANE ?? "")}`);
   env.push(`PI_SUBAGENT_NAME=${shellEscape(spec.name)}`);
   env.push(`PI_SUBAGENT_AGENT=${shellEscape(spec.agent)}`);
   if (spec.interactive) env.push("PI_SUBAGENT_INTERACTIVE=1");
@@ -726,10 +727,18 @@ async function watchSubagent(
         : result.reason === "closed"
           ? "Sub-agent closed without calling subagent_done."
           : "Sub-agent exited without output";
-    const summary = existsSync(sessionFile)
+    let summary = result.summary ?? (existsSync(sessionFile)
       ? (findLastAssistantMessage(getNewEntries(sessionFile, 0)) ?? fallback)
-      : fallback;
+      : fallback);
+    if (result.handedOverWindows?.length) {
+      summary += `\n\nHanded tmux windows to you: ${result.handedOverWindows.join(", ")}. ` +
+        "These runs remain alive; use tmux read/stop with these names. Completion snapshots will arrive automatically.";
+    }
 
+    // Parent may itself be a non-interactive child. Register transferred runs
+    // before releasing the pending-child blocker, not at the next 2s sweep.
+    const adoptWindows = (globalThis as any)[Symbol.for("pi-tmux/adopt-windows")] as (() => void) | undefined;
+    adoptWindows?.();
     closeChild(running);
     runningSubagents.delete(running.id);
 

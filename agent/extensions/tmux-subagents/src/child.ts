@@ -72,10 +72,10 @@ export function findLatestAssistantError(messages: any[] | undefined): SubagentE
  * Read via Symbol.for keys, not imports: index.ts has load-time side effects
  * and the tmux extension is a separate package.
  */
-export function runningChildCount(): number {
+export function runningChildCount(keepWindows = false): number {
   const g = globalThis as any;
   const size = (key: string) => (g[Symbol.for(key)] as Map<string, unknown> | undefined)?.size ?? 0;
-  return size("pi-tmux-subagents/running") + size("pi-tmux/auto-exit-watchers");
+  return size("pi-tmux-subagents/running") + (keepWindows ? 0 : size("pi-tmux/auto-exit-watchers"));
 }
 
 /** Exiting now would kill pending children/panes and strand their results. */
@@ -83,7 +83,8 @@ export function pendingChildrenError(action: string, children = runningChildCoun
   if (children <= 0) return null;
   return new Error(
     `${children} of your subagent(s)/tmux pane(s) still running; ${action} now would exit and lose their results. ` +
-      "End your turn instead — this session stays alive and their results steer back automatically.",
+      "End your turn instead — this session stays alive and their results steer back automatically. " +
+      "To hand tmux run windows to your parent, call subagent_done with keepWindows: true. Running subagents still block finishing.",
   );
 }
 
@@ -290,18 +291,36 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent Done",
     description:
       "Call when your task is complete. Closes this session and returns your results to the caller. " +
-      "Pass your final result as `message`; without it, your LAST assistant text becomes the summary.",
+      "Pass your final result as `message`; without it, your LAST assistant text becomes the summary. " +
+      "Set keepWindows: true to hand live tmux-tool runs to the parent (ownership, widget, completion delivery). " +
+      "Running subagents always block finishing.",
+    executionMode: "sequential",
     parameters: Type.Object({
       message: Type.Optional(Type.String({ description: "Final result returned to the caller" })),
+      keepWindows: Type.Optional(Type.Boolean({ description: "Hand live tmux-tool run windows to the parent instead of blocking completion" })),
     }),
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const pending = pendingChildrenError("finishing");
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const pending = pendingChildrenError("finishing", runningChildCount(params.keepWindows));
       if (pending) throw new Error(`${pending.message} Then call subagent_done.`);
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
+      let handedOverWindows: string[] = [];
+      if (params.keepWindows) {
+        const handover = g[Symbol.for("pi-tmux/handover-windows")] as ((parentPane: string) => Promise<string[]>) | undefined;
+        const parentPane = process.env.PI_SUBAGENT_PARENT_PANE;
+        if (handover && parentPane) handedOverWindows = await handover(parentPane);
+        else if (runningChildCount() > 0) throw new Error("Cannot hand over windows: parent pane or tmux extension unavailable. End your turn and wait for completion instead.");
+      }
       recorder.subagentDone();
-      if (sessionFile) writeFileSync(`${sessionFile}.exit`, JSON.stringify({ type: "done" }));
+      if (sessionFile) writeFileSync(`${sessionFile}.exit`, JSON.stringify({
+        type: "done", summary: params.message, handedOverWindows,
+      }));
       ctx.shutdown();
-      return { content: [{ type: "text", text: "Shutting down subagent session." }], details: {} };
+      const handoverNote = handedOverWindows.length ? ` Handed tmux windows to parent: ${handedOverWindows.join(", ")}.` : "";
+      return {
+        content: [{ type: "text", text: `Shutting down subagent session.${handoverNote}` }],
+        details: { handedOverWindows },
+        terminate: true,
+      };
     },
   });
 }

@@ -26,7 +26,8 @@ tmux server
   detached session `<spawner session>-<slug>` (`-<id4>` when taken) instead; it
   owns that session, and its own runs and children land there.
 - Ownership lives in tmux user options (`@pi-ext/tmux-windows`), so cleanup
-  never depends on memory. Each pi sees and controls only what it created.
+  never depends on memory. Each pi sees and controls only its owned windows,
+  including runs explicitly handed over by a child.
 - Lead sessions get `detach-on-destroy previous`: a client viewing one moves to
   the previous session when it dies. Use `prefix s` / `prefix w` to look in.
 
@@ -124,8 +125,23 @@ tools override: the definition decides (model, else the parent's).
 
 Every child loads `child.ts` and `builtin:codemode` via `-e`, including resumes:
 
-- `subagent_done({ message? })` — finish; `message` is the summary, else the
-  last assistant text. Refused while own children/runs are pending.
+- `subagent_done({ message?, keepWindows? })` — finish; `message` is the summary,
+  else the last assistant text. Running subagents always block. Pending tmux
+  runs also block unless `keepWindows: true` transfers them to the parent.
+  Handed-over windows keep running, move into the parent's tmux session when
+  necessary (before the child lead session is destroyed), and switch
+  `@pi_owner` to the parent's pane. Name collisions get `-2`, `-3`, … suffixes;
+  run creation and handover serialize name allocation with the system `flock`
+  command (5s lock deadline; timeout refuses the transfer). Locks release on
+  process death. Zero-byte lock files in the OS temp dir are kept so waiters
+  always share the same inode.
+  The result lists the final names; the parent can use `tmux` read/send/stop.
+  Parent adopts before releasing its child-completion blocker (preventing
+  nested auto-exit); its widget and 2s sweep also recover runs from `@pi_run` metadata
+  (command, start time, snapshot/status/script paths, wait-for channel).
+  Completion snapshots steer to the parent, not the child. Child quit leaves
+  transferred windows alone. If transfer fails, finishing is refused; retry
+  with `keepWindows: true` or wait for remaining runs to complete.
 - `caller_ping({ message })` — ask the parent for help via the room. The child
   stays alive; the parent's `room` reply arrives as its next message.
 - `room` comes from `index.ts` (every process); see Rooms.
@@ -174,6 +190,7 @@ Policy (`policy.ts`), at any depth:
 | Var | Meaning |
 | --- | --- |
 | `PI_SUBAGENT_ID`, `_NAME`, `_AGENT`, `_SESSION`, `_ACTIVITY_FILE` | set for every child |
+| `PI_SUBAGENT_PARENT_PANE` | spawner's tmux pane; target for `keepWindows` handover |
 | `PI_SUBAGENT_INTERACTIVE=1` | interactive child (no auto-exit) |
 | `PI_SUBAGENT_LEAD=1` | lead child (own tmux session) |
 | `PI_ROOM` | room dir the child is a member of |

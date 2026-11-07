@@ -22,7 +22,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { closeWindow, createWindow, isPaneAlive, ownedWindows, userShell, viaUserShell } from "@pi-ext/tmux-windows";
+import { closeWindow, createWindow, handoverWindow, isPaneAlive, ownedWindows, setWindowOption, userShell, viaUserShell, windowOption } from "@pi-ext/tmux-windows";
 import { formatElapsedMMSS, renderBox, SECTION_ORDER, setStackSection } from "@pi-ext/tmux-windows/widget";
 import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 import { registerResurrect } from "./resurrect.ts";
@@ -54,6 +54,9 @@ interface SharedState {
 	/** Latest session ctx; the widget renders through it. */
 	ctx?: ExtensionContext;
 	widgetTimer?: NodeJS.Timeout;
+	handedOver?: string[];
+	/** Prevent re-adoption if kill-window failed after terminal delivery. */
+	finished?: Set<string>;
 }
 
 // v2: runs are managed windows. Pre-window (pane) state stays under the old key, handled by its own closures.
@@ -108,12 +111,14 @@ export default function (pi: ExtensionAPI) {
 	state.api = pi;
 	const api = () => state.api!;
 	const { runs, watchers } = state;
+	const finished = (state.finished ??= new Set<string>());
 	// tmux-subagents' child.ts holds auto-exit while any of these are pending.
 	g[Symbol.for("pi-tmux/auto-exit-watchers")] = watchers;
 
 	// Fallback when the wait-for signal is lost, or the pane is closed outside this tool:
 	// otherwise the result is never delivered and the pane counts as pending forever.
 	state.sweepNow = () => {
+		adoptRuns();
 		for (const run of runs.values()) {
 			if (run.result || !run.statusPath) continue;
 			const gone = !isPaneAlive(run.paneId);
@@ -161,29 +166,103 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		state.ctx = ctx;
+		adoptRuns();
 		updateWidget();
 	});
+
+	// Durable metadata belongs to the window, not to the child process/session.
+	function runMetadata(run: PaneRun, channel: string): string {
+		return JSON.stringify({
+			command: run.command, started: run.started, fullOutputPath: run.fullOutputPath,
+			statusPath: run.statusPath, scriptPath: run.scriptPath, channel,
+		});
+	}
+
+	function adoptRuns() {
+		let changed = false;
+		for (const window of ownedWindows("@pi_name")) {
+			if (runs.has(window.paneId) || finished.has(window.paneId)) continue;
+			try {
+				const data = JSON.parse(windowOption(window.paneId, "@pi_run"));
+				if (typeof data?.command !== "string" || typeof data.started !== "number" ||
+					typeof data.fullOutputPath !== "string" || typeof data.statusPath !== "string" ||
+					typeof data.scriptPath !== "string" || typeof data.channel !== "string") continue;
+				runs.set(window.paneId, {
+					pane: window.tag, paneId: window.paneId, command: data.command, started: data.started,
+					fullOutputPath: data.fullOutputPath, statusPath: data.statusPath, scriptPath: data.scriptPath,
+				});
+				// No second wait-for client: the status-file sweep is sufficient.
+				watchers.set(window.paneId, data.channel);
+				changed = true;
+			} catch { /* Window vanished, or metadata is not a managed run. */ }
+		}
+		if (changed) updateWidget();
+	}
+
+	// The subagent watcher calls this before dropping its own pending-child
+	// blocker, closing the auto-exit gap before the next periodic sweep.
+	g[Symbol.for("pi-tmux/adopt-windows")] = adoptRuns;
+
+	g[Symbol.for("pi-tmux/handover-windows")] = async (parentPane: string): Promise<string[]> => {
+		const names = (state.handedOver ??= []);
+		for (const run of runs.values()) {
+			// Transfer/deletion is synchronous after this check: a finishing
+			// watcher cannot race the owner change and close the parent's run.
+			if (run.result) { await run.result; continue; }
+			const channel = watchers.get(run.paneId);
+			if (!channel || !run.statusPath) continue;
+			setWindowOption(run.paneId, "@pi_run", runMetadata(run, channel));
+			const name = handoverWindow(run.paneId, parentPane);
+			runs.delete(run.paneId);
+			watchers.delete(run.paneId);
+			names.push(name);
+			// Release the child's wait-for process. Its callback sees no owned run
+			// and cannot close the parent's window or send a duplicate completion.
+			void api().exec("tmux", ["wait-for", "-S", channel], { timeout: 5000 }).catch(() => {});
+		}
+		updateWidget();
+		return [...names];
+	};
 
 	function finishPane(run: PaneRun, reason = "finished") {
 		if (run.result) return run.result;
 		const pending = (async () => {
 			let exitCode = -1;
+			const errors: string[] = [];
 			if (run.statusPath) {
 				try {
 					const status = (await readFile(run.statusPath, "utf8")).trim();
 					if (/^\d+$/.test(status)) exitCode = Number(status);
 				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+					if (error instanceof Error && "code" in error && error.code !== "ENOENT") errors.push(`status read failed: ${error.message}`);
 				}
 			}
-			// Never close before the snapshot is safely on disk.
 			const alive = isPaneAlive(run.paneId);
-			const output = alive ? await capturePane(run.paneId) : "(window was closed before its output could be captured)\n";
-			await writeFile(run.fullOutputPath, output, { mode: 0o600 });
+			let snapshotSaved = false;
+			try {
+				const output = alive ? await capturePane(run.paneId) : "(window was closed before its output could be captured)\n";
+				await writeFile(run.fullOutputPath, output, { mode: 0o600 });
+				snapshotSaved = true;
+			} catch (error) {
+				errors.push(`output capture failed: ${String(error)}`);
+				// One bounded fallback write. A broken filesystem must not strand a
+				// finished run, its window, or its completion notification forever.
+				try {
+					await writeFile(run.fullOutputPath, `(${errors.join("; ")})\n`, { mode: 0o600 });
+					snapshotSaved = true;
+				} catch (fallbackError) {
+					errors.push(`placeholder snapshot failed: ${String(fallbackError)}`);
+				}
+			}
+			// Remove recovery metadata before close; even a failed kill must not
+			// turn a delivered completion into a newly adopted run on restart.
+			try { setWindowOption(run.paneId, "@pi_run", ""); } catch { /* Gone/busy server. */ }
 			if (alive) closeWindow(run.paneId);
 			const channel = watchers.get(run.paneId);
 			// Release a wait-for client the runner will never signal.
-			if (channel && reason !== "finished") await api().exec("tmux", ["wait-for", "-S", channel]);
+			if (channel && reason !== "finished") {
+				await api().exec("tmux", ["wait-for", "-S", channel], { timeout: 5000 }).catch(() => {});
+			}
 			for (const path of [run.scriptPath, run.statusPath]) {
 				if (path) await rm(path, { force: true }).catch(() => {});
 			}
@@ -191,15 +270,18 @@ export default function (pi: ExtensionAPI) {
 				exitCode,
 				elapsed: Math.round((Date.now() - run.started) / 1000),
 				fullOutputPath: run.fullOutputPath,
+				snapshotSaved,
+				...(errors.length ? { error: errors.join("; ") } : {}),
 			};
 			// Delete right before steering: a subagent may auto-exit once this hits 0.
 			runs.delete(run.paneId);
 			watchers.delete(run.paneId);
+			finished.add(run.paneId);
 			updateWidget();
 			api().sendMessage(
 				{
 					customType: "tmux_result",
-					content: `tmux window '${run.pane}' ${reason}: '${run.command}' (exit ${exitCode}, ${result.elapsed}s). Window closed.\nSnapshot: ${run.fullOutputPath}\nUse the read tool with this path to inspect window content.`,
+					content: `tmux window '${run.pane}' ${reason}: '${run.command}' (exit ${exitCode}, ${result.elapsed}s). Window closed.${errors.length ? `\n${errors.join("; ")}` : ""}\n${snapshotSaved ? `Snapshot: ${run.fullOutputPath}\nUse the read tool with this path to inspect window content.` : `Snapshot unavailable (intended path: ${run.fullOutputPath}).`}`,
 					display: true,
 					details: { pane: run.pane, command: run.command, ...result },
 				},
@@ -208,9 +290,7 @@ export default function (pi: ExtensionAPI) {
 			return result;
 		})();
 		run.result = pending;
-		void pending.catch(() => {
-			if (run.result === pending) run.result = undefined;
-		});
+		// Terminal promise is retained even if steering fails: never finish twice.
 		return pending;
 	}
 
@@ -271,14 +351,14 @@ export default function (pi: ExtensionAPI) {
 		name: "tmux",
 		label: "tmux",
 		description:
-			"Manage named tmux windows for long-running processes (dev servers, watchers, etc). Windows open detached in your own tmux session. " +
+			"Manage named tmux windows for long-running processes (dev servers, watchers, etc). Windows open detached in your own tmux session; handed-over child runs become yours. " +
 			"Actions: run (start command in named window), read (capture output), send (send keys like C-c), stop (snapshot and close window), list (show your windows). " +
 			"All commands automatically close their window on completion and deliver exit code + snapshot path in the current session folder. Use the read tool on that path for results.",
 		promptGuidelines: [
 			"Use `tmux` run for long-running processes (dev servers, watchers, builds) instead of `bash`.",
 			"Use `bash` only for short-lived commands that complete quickly.",
 			"Every tmux run automatically delivers completion + a snapshot file path; do not poll for completion. Read the snapshot with the read tool.",
-			"Each run opens a detached window in your own tmux session; you see and control only windows you created. The `pane` param is the window name.",
+			"Each run opens a detached window in your own tmux session; you see and control only your owned windows (including child handovers). The `pane` param is the window name.",
 			"Never create, kill, or move tmux windows or sessions via bash (`tmux new-window`, `new-session`, `break-pane`, `kill-window`, ...); such commands are blocked. Use this tool (windows) or `tmux_subagent` instead.",
 		],
 		parameters: Type.Object({
@@ -310,6 +390,7 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const { action } = params;
+			adoptRuns();
 
 			switch (action) {
 				case "run": {
@@ -362,6 +443,7 @@ ${command}
 							tag: { key: "@pi_name", value: pane },
 							cwd,
 							command: viaUserShell(inner),
+							options: { "@pi_run": runMetadata(run, channel) },
 						});
 					} catch (error) {
 						await rm(dir, { recursive: true, force: true });
@@ -375,21 +457,10 @@ ${command}
 					// A runner that finished before this registers already set the channel; wait-for returns at once.
 					void api().exec("tmux", ["wait-for", channel])
 						.then((result) => {
-							if (result.code !== 0) throw new Error(`wait-for failed: ${result.stderr}`);
+							if (result.code !== 0 || runs.get(newPaneId) !== run) return;
 							return finishPane(run);
 						})
-						.catch((error) => {
-							watchers.delete(newPaneId);
-							api().sendMessage(
-								{
-									customType: "tmux_result",
-									content: `tmux window '${pane}' watcher error: ${String(error)}. Window may still be open; inspect it with tmux read/list.`,
-									display: true,
-									details: { pane, command, exitCode: -1, elapsed: 0, error: String(error) },
-								},
-								{ triggerTurn: true, deliverAs: "steer" },
-							);
-						});
+						.catch(() => { /* Sweep recovers lost wait-for; completion is sent only by finishPane. */ });
 
 					return {
 						content: [{
