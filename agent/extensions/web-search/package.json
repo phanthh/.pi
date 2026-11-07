@@ -6,5 +6,9 @@
 		"extensions": [
 			"./src/index.ts"
 		]
+	},
+	"dependencies": {
+		"linkedom": "catalog:",
+		"wreq-js": "catalog:"
 	}
 }

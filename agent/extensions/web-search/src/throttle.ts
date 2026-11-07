@@ -1,7 +1,7 @@
 /**
  * Cross-process request spacing. Every pi process (main session + subagents)
  * reserves the next start slot in a shared file under the OS temp dir, so the
- * combined SearXNG request rate stays below upstream engine rate limits.
+ * combined request rate stays below each backend's rate limits.
  */
 import { mkdir, readFile, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,11 +10,14 @@ import { join } from "node:path";
 const LOCK_STALE_MS = 5_000;
 const LOCK_RETRY_MS = 15;
 
-function paths() {
+type Backend = "searxng" | "duckduckgo";
+
+function paths(backend: Backend) {
 	const dir = tmpdir();
+	const key = backend === "searxng" ? "pi-web-search" : "pi-web-search-ddg";
 	return {
-		lock: join(dir, "pi-web-search.lock"),
-		state: join(dir, "pi-web-search.next"),
+		lock: join(dir, `${key}.lock`),
+		state: join(dir, `${key}.next`),
 	};
 }
 
@@ -36,9 +39,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 async function withLock<T>(
 	fn: () => Promise<T>,
-	signal?: AbortSignal,
+	signal: AbortSignal | undefined,
+	backend: Backend,
 ): Promise<T> {
-	const { lock } = paths();
+	const { lock } = paths(backend);
 	for (;;) {
 		signal?.throwIfAborted();
 		try {
@@ -68,9 +72,11 @@ async function withLock<T>(
 export async function reserveSlot(
 	intervalMs: number,
 	signal?: AbortSignal,
+	backend: Backend = "searxng",
 ): Promise<number> {
+	signal?.throwIfAborted();
 	if (intervalMs <= 0) return 0;
-	const { state } = paths();
+	const { state } = paths(backend);
 	const start = await withLock(async () => {
 		let next = 0;
 		try {
@@ -82,7 +88,7 @@ export async function reserveSlot(
 		const slot = Math.max(now, next);
 		await writeFile(state, String(slot + intervalMs));
 		return slot;
-	}, signal);
+	}, signal, backend);
 	return Math.max(0, start - Date.now());
 }
 
@@ -90,8 +96,9 @@ export async function reserveSlot(
 export async function throttle(
 	intervalMs: number,
 	signal?: AbortSignal,
+	backend: Backend = "searxng",
 ): Promise<number> {
-	const wait = await reserveSlot(intervalMs, signal);
+	const wait = await reserveSlot(intervalMs, signal, backend);
 	await sleep(wait, signal);
 	return wait;
 }
