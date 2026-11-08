@@ -1,5 +1,5 @@
 /**
- * web_search — parallel SearXNG + DuckDuckGo HTML search.
+ * web_search — minimal SearXNG search tool.
  * Base URL from ~/.pi/agent/web-search.json ({ "searxngBaseUrl": ... }),
  * else SEARXNG_URL env, else http://localhost:8888.
  * Requests are spaced globally across pi processes (see throttle.ts).
@@ -12,12 +12,30 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { search, type SearchDetails } from "./search.ts";
+import { throttle } from "./throttle.ts";
 
 const DEFAULT_BASE_URL = "http://localhost:8888";
 const DEFAULT_MAX_RESULTS = 8;
 const MAX_RESULTS_LIMIT = 50;
+const TIMEOUT_MS = 15_000;
 const DEFAULT_MIN_INTERVAL_MS = 1_500;
+
+interface SearchResult {
+	title: string;
+	url: string;
+	content?: string;
+	engine?: string;
+	publishedDate?: string;
+}
+
+interface SearchDetails {
+	query: string;
+	count: number;
+	results: SearchResult[];
+	answers?: string[];
+	suggestions?: string[];
+	engineFailures?: string[];
+}
 
 function readConfig(): Record<string, unknown> {
 	try {
@@ -48,6 +66,14 @@ function resolveMinInterval(config: Record<string, unknown>): number {
 		: DEFAULT_MIN_INTERVAL_MS;
 }
 
+function asStrings(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out = value.filter(
+		(v): v is string => typeof v === "string" && v.trim().length > 0,
+	);
+	return out.length > 0 ? out : undefined;
+}
+
 function snippet(value: string | undefined, max = 240): string | undefined {
 	if (!value) return undefined;
 	const compact = value.replace(/\s+/g, " ").trim();
@@ -67,9 +93,9 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search SearXNG and DuckDuckGo HTML in parallel. Returns merged titles, URLs, snippets, and sources. Categories apply only to SearXNG; page > 1 uses SearXNG only. Use web_fetch to read page contents.",
+			"Search the web using a local SearXNG instance. Returns titles, URLs, and snippets. Use web_fetch to read page contents.",
 		promptSnippet:
-			"web_search(query, max_results?): search SearXNG + DuckDuckGo HTML; returns merged, source-labelled results, use web_fetch to read pages",
+			"web_search(query, max_results?): search web via local SearXNG; returns compact results, use web_fetch to read pages",
 
 		parameters: Type.Object({
 			query: Type.String({ description: "Search query" }),
@@ -93,31 +119,113 @@ export default function (pi: ExtensionAPI) {
 				),
 			),
 			page: Type.Optional(
-				Type.Number({ description: "Result page. Default: 1; page > 1 queries SearXNG only", minimum: 1 }),
+				Type.Number({ description: "Result page. Default: 1", minimum: 1 }),
 			),
 		}),
 
 		async execute(_toolCallId, params, signal) {
 			const config = readConfig();
-			const { details, isError } = await search({
+			const baseUrl = resolveBaseUrl(config);
+			const maxResults = Math.min(
+				MAX_RESULTS_LIMIT,
+				Math.max(1, Math.floor(params.max_results ?? DEFAULT_MAX_RESULTS)),
+			);
+
+			const url = new URL("search", `${baseUrl}/`);
+			url.searchParams.set("q", params.query);
+			url.searchParams.set("format", "json");
+			url.searchParams.set(
+				"pageno",
+				String(Math.max(1, Math.floor(params.page ?? 1))),
+			);
+			if (params.categories)
+				url.searchParams.set("categories", params.categories);
+			if (params.time_range)
+				url.searchParams.set("time_range", params.time_range);
+
+			await throttle(resolveMinInterval(config), signal);
+
+			let response: Response;
+			try {
+				response = await fetch(url, {
+					headers: { Accept: "application/json" },
+					signal: AbortSignal.any([
+						AbortSignal.timeout(TIMEOUT_MS),
+						...(signal ? [signal] : []),
+					]),
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (/fetch failed|ECONNREFUSED/.test(message)) {
+					throw new Error(
+						`Could not connect to SearXNG at ${baseUrl}. Check docker compose service is running.`,
+					);
+				}
+				throw err;
+			}
+
+			if (!response.ok) {
+				throw new Error(
+					`SearXNG search failed: HTTP ${response.status} ${response.statusText}`,
+				);
+			}
+
+			const data = (await response.json()) as {
+				results?: unknown;
+				answers?: unknown;
+				suggestions?: unknown;
+				unresponsive_engines?: unknown;
+			} | null;
+			if (!data || !Array.isArray(data.results)) {
+				throw new Error("Invalid SearXNG response: expected a results array.");
+			}
+			const engineFailures = Array.isArray(data.unresponsive_engines)
+				? data.unresponsive_engines.flatMap((entry: unknown) =>
+						Array.isArray(entry) &&
+						typeof entry[0] === "string" &&
+						typeof entry[1] === "string"
+							? [`${entry[0]}: ${entry[1]}`]
+							: [],
+					)
+				: [];
+
+			const seen = new Set<string>();
+			const results: SearchResult[] = [];
+			for (const item of data.results) {
+				if (!item || typeof item !== "object") continue;
+				const r = item as Record<string, unknown>;
+				if (typeof r.url !== "string" || seen.has(r.url)) continue;
+				seen.add(r.url);
+				results.push({
+					title: typeof r.title === "string" && r.title ? r.title : r.url,
+					url: r.url,
+					content: typeof r.content === "string" ? r.content : undefined,
+					engine: typeof r.engine === "string" ? r.engine : undefined,
+					publishedDate:
+						typeof r.publishedDate === "string" ? r.publishedDate : undefined,
+				});
+				if (results.length >= maxResults) break;
+			}
+
+			const details: SearchDetails = {
 				query: params.query,
-				baseUrl: resolveBaseUrl(config),
-				minIntervalMs: resolveMinInterval(config),
-				maxResults: Math.min(
-					MAX_RESULTS_LIMIT,
-					Math.max(1, Math.floor(params.max_results ?? DEFAULT_MAX_RESULTS)),
-				),
-				page: Math.max(1, Math.floor(params.page ?? 1)),
-				categories: params.categories,
-				timeRange: params.time_range,
-			}, signal);
-			const { results } = details;
+				count: results.length,
+				results,
+				answers: asStrings(data.answers),
+				suggestions: asStrings(data.suggestions),
+				engineFailures,
+			};
+
 			const lines: string[] = [];
 			if (details.answers?.length) {
 				lines.push(`Answers: ${details.answers.join(" | ")}`, "");
 			}
 			if (results.length === 0) {
-				lines.push(isError ? `Search failed for: ${params.query}` : `No results for: ${params.query}`);
+				lines.push(
+					engineFailures.length
+						? `SearXNG returned no results; upstream engines failed for: ${params.query}`
+						: `No results for: ${params.query}`,
+				);
 				if (details.suggestions?.length) {
 					lines.push(`Suggestions: ${details.suggestions.join(", ")}`);
 				}
@@ -128,17 +236,23 @@ export default function (pi: ExtensionAPI) {
 					lines.push(`   URL: ${r.url}`);
 					const s = snippet(r.content);
 					if (s) lines.push(`   ${s}`);
-					lines.push(`   Sources: ${r.sources.join(", ")}`);
 					const meta = [r.engine, r.publishedDate].filter(Boolean).join(" · ");
 					if (meta) lines.push(`   ${meta}`);
 					if (i < results.length - 1) lines.push("");
 				});
 			}
-			if (details.notes.length) lines.push("", ...details.notes);
+
+			if (engineFailures.length) {
+				lines.push("", `Engine failures: ${engineFailures.join("; ")}`);
+			}
+
 			return {
 				content: [{ type: "text" as const, text: lines.join("\n") }],
 				details,
-				isError,
+				isError:
+					results.length === 0 &&
+					!details.answers?.length &&
+					engineFailures.length > 0,
 			};
 		},
 
@@ -172,12 +286,17 @@ export default function (pi: ExtensionAPI) {
 			const lines = [
 				theme.fg("toolTitle", theme.bold(`Results (${details.count})`)),
 			];
-			for (const note of details.notes ?? []) {
-				lines.push(theme.fg("warning", note));
+			if (details.engineFailures?.length) {
+				lines.push(
+					theme.fg(
+						"warning",
+						`Engine failures: ${details.engineFailures.join("; ")}`,
+					),
+				);
 			}
 			details.results.forEach((r, i) => {
 				lines.push(
-					`${i + 1}. ${theme.fg("text", r.title)} ${theme.fg("muted", "—")} ${theme.fg("accent", hostname(r.url))} ${theme.fg("muted", `[${r.sources?.join(", ") ?? r.engine ?? "SearXNG"}]`)}`,
+					`${i + 1}. ${theme.fg("text", r.title)} ${theme.fg("muted", "—")} ${theme.fg("accent", hostname(r.url))}`,
 				);
 				if (expanded) {
 					lines.push(`   ${theme.fg("dim", r.url)}`);
