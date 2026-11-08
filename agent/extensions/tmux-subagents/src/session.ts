@@ -13,6 +13,8 @@ export interface MessageEntry extends SessionEntry {
   message: {
     role: "user" | "assistant" | "toolResult";
     content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+    toolCallId?: string;
+    stopReason?: string;
   };
 }
 
@@ -21,7 +23,10 @@ export function getNewEntries(sessionFile: string, afterLine: number): SessionEn
     .split("\n")
     .filter((line) => line.trim())
     .slice(afterLine)
-    .map((line) => JSON.parse(line) as SessionEntry);
+    .flatMap((line) => {
+      try { return [JSON.parse(line) as SessionEntry]; }
+      catch { return []; } // A process crash can leave a partial JSONL entry.
+    });
 }
 
 /** `message` argument of a `subagent_done` call in this content, if any. */
@@ -40,7 +45,8 @@ function doneMessage(content: MessageEntry["message"]["content"]): string | null
  * stopReason "error" (retry exhausted), so the parent does not mistake a crash
  * for a completion.
  */
-export function findLastAssistantMessage(entries: SessionEntry[]): string | null {
+export function findLastAssistantMessage(entries: SessionEntry[], includeErrors = true): string | null {
+  let error: string | null = null;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (entry.type !== "message") continue;
@@ -58,8 +64,26 @@ export function findLastAssistantMessage(entries: SessionEntry[]): string | null
     const stopReason = (msg.message as { stopReason?: unknown }).stopReason;
     const errorMessage = (msg.message as { errorMessage?: unknown }).errorMessage;
     if (stopReason === "error" && typeof errorMessage === "string" && errorMessage.trim() !== "") {
-      return `Subagent error: ${errorMessage.trim()}`;
+      error ??= `Subagent error: ${errorMessage.trim()}`;
     }
   }
-  return null;
+  return includeErrors ? error : null;
+}
+
+/** Last persisted work, including tool calls with no matching result. */
+export function lastSessionActivity(entries: SessionEntry[]): string {
+  const completed = new Set<string>();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type !== "message") continue;
+    const msg = (entry as MessageEntry).message;
+    if (msg.role === "toolResult" && typeof msg.toolCallId === "string") completed.add(msg.toolCallId);
+    if (msg.role !== "assistant") continue;
+    const pending = msg.content.filter((b) => b.type === "toolCall" && !completed.has(String(b.id)));
+    if (pending.length) return `Died during tool call ${pending.map((b) => String(b.name)).join(", ")}.`;
+    const text = msg.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
+    if (text) return `Last assistant text: ${text.slice(-1200)}`;
+    return `Last assistant entry: ${String(msg.stopReason ?? "no text")}.`;
+  }
+  return `Last session entry: ${entries.at(-1)?.type ?? "none (session not written)"}.`;
 }

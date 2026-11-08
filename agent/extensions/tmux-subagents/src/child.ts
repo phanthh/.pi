@@ -149,6 +149,7 @@ export default function (pi: ExtensionAPI) {
   let userTookOver = false;
   let agentStarted = false;
   let awaitingReply = false;
+  let finishing = false;
 
   pi.on("session_start", (_event, ctx) => {
     // Resume and project defaults can omit codemode; keep the role's other tools unchanged.
@@ -176,23 +177,32 @@ export default function (pi: ExtensionAPI) {
     recorder.agentStart();
   });
 
-  pi.on("agent_end", (event, ctx) => {
-    const messages = (event as any).messages as any[] | undefined;
-    const shouldExit = autoExit && shouldAutoExitOnAgentEnd(userTookOver, messages, runningChildCount(), awaitingReply);
+  let lastMessages: any[] | undefined;
+  pi.on("agent_end", (event) => {
+    lastMessages = event.messages;
+    recorder.agentEndWaiting(runningChildCount());
+  });
+
+  // agent_end is low-level: retries may still follow. Only settle closes the process.
+  pi.on("agent_settled", (event, ctx) => {
+    if (finishing) return; // Preserve explicit subagent_done summary/handover metadata.
+    const delivered = drainChildInbox();
+    const errorInfo = findLatestAssistantError(lastMessages);
+    const shouldExit = !event.aborted && delivered === 0 && !ctx.hasPendingMessages() && (autoExit || !!errorInfo) &&
+      shouldAutoExitOnAgentEnd(userTookOver, lastMessages, runningChildCount(), awaitingReply);
 
     if (shouldExit) {
       // Surface retry-exhausted turns through the .exit sidecar; without it the
       // parent sees exit code 0 plus a stale message and calls the crash a success.
-      const errorInfo = findLatestAssistantError(messages);
       const sessionFile = process.env.PI_SUBAGENT_SESSION;
-      if (errorInfo && sessionFile) {
+      if (sessionFile) {
         try {
-          writeFileSync(
-            `${sessionFile}.exit`,
-            JSON.stringify({ type: "error", errorMessage: errorInfo.errorMessage, stopReason: errorInfo.stopReason }),
-          );
+          writeFileSync(`${sessionFile}.exit`, JSON.stringify(errorInfo
+            ? { type: "error", errorMessage: errorInfo.errorMessage, stopReason: errorInfo.stopReason }
+            : { type: "done" }));
         } catch {}
       }
+      finishing = true;
       recorder.agentEndDone();
       ctx.shutdown();
       return;
@@ -229,18 +239,20 @@ export default function (pi: ExtensionAPI) {
   const room = process.env.PI_ROOM;
   const g = globalThis as any;
   clearInterval(g[INBOX_INTERVAL_KEY]);
+  function drainChildInbox(): number {
+    if (!room || !subagentName) return 0;
+    try {
+      return drainInbox(room, subagentName, (message) => {
+        if (message.from === HOST) awaitingReply = false;
+        pi.sendMessage(
+          { customType: "room_message", content: formatRoomMessage(message), display: true, details: message },
+          { triggerTurn: true, deliverAs: "steer" },
+        );
+      });
+    } catch { return 0; }
+  }
   if (room && subagentName) {
-    g[INBOX_INTERVAL_KEY] = setInterval(() => {
-      try {
-        drainInbox(room, subagentName, (message) => {
-          if (message.from === HOST) awaitingReply = false;
-          pi.sendMessage(
-            { customType: "room_message", content: formatRoomMessage(message), display: true, details: message },
-            { triggerTurn: true, deliverAs: "steer" },
-          );
-        });
-      } catch {}
-    }, 1000);
+    g[INBOX_INTERVAL_KEY] = setInterval(drainChildInbox, 1000);
     g[INBOX_INTERVAL_KEY].unref?.();
   }
 
@@ -311,6 +323,7 @@ export default function (pi: ExtensionAPI) {
         else if (runningChildCount() > 0) throw new Error("Cannot hand over windows: parent pane or tmux extension unavailable. End your turn and wait for completion instead.");
       }
       recorder.subagentDone();
+      finishing = true;
       if (sessionFile) writeFileSync(`${sessionFile}.exit`, JSON.stringify({
         type: "done", summary: params.message, handedOverWindows,
       }));

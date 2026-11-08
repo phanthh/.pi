@@ -22,7 +22,7 @@ export interface Member {
   name: string;
   id: string;
   agent?: string;
-  status: "running" | "done" | "failed" | "stopped";
+  status: "running" | "done" | "failed" | "stopped" | "lost";
   sessionFile: string;
   /** Pane of the child's pi; lead children also own `sessionId`. */
   surface: string;
@@ -38,6 +38,8 @@ export interface Member {
 }
 
 export interface RoomMessage {
+  /** Durable inbox filename, acknowledged when Pi consumes the custom message. */
+  inboxId?: string;
   from: string;
   to: string;
   body: string;
@@ -107,24 +109,61 @@ export function postMessage(room: string, message: RoomMessage): void {
   const dir = join(room, "inbox", fileName(message.to));
   mkdirSync(dir, { recursive: true });
   // Timestamp prefix keeps delivery order; random suffix avoids collisions.
-  writeAtomic(join(dir, `${String(message.ts).padStart(15, "0")}-${randomBytes(3).toString("hex")}.json`), message);
+  const inboxId = `${String(message.ts).padStart(15, "0")}-${randomBytes(6).toString("hex")}`;
+  writeAtomic(join(dir, `${inboxId}.json`), { ...message, inboxId });
 }
 
-/**
- * Hand every queued message for `name` to `deliver`, oldest first, deleting
- * each after delivery. A crash mid-drain re-delivers at most that one message.
- */
+// Keep queued steering durable until session persistence, not merely sendMessage.
+// index.ts and child.ts are separate extension roots with separate module caches.
+const IN_FLIGHT_KEY = Symbol.for("pi-tmux-subagents/inbox-in-flight");
+const shared = globalThis as typeof globalThis & { [IN_FLIGHT_KEY]?: Set<string> };
+const inFlight = shared[IN_FLIGHT_KEY] ??= new Set<string>();
+
+/** Settled runs have consumed or discarded their steering queue. Retry unread mail. */
+export function releaseInbox(room: string, name: string): void {
+  const dir = join(room, "inbox", fileName(name));
+  for (const path of inFlight) if (path.startsWith(`${dir}/`)) inFlight.delete(path);
+}
+
+function acknowledgeInbox(room: string, name: string, inboxId: unknown): void {
+  if (typeof inboxId !== "string" || !/^\d+-[a-f0-9]+$/.test(inboxId)) return;
+  const path = join(room, "inbox", fileName(name), `${inboxId}.json`);
+  rmSync(path, { force: true });
+  inFlight.delete(path);
+}
+
+/** Clear only messages already persisted in the recipient's session history. */
+export function acknowledgePersistedInbox(room: string, name: string, getEntries: () => readonly { type: string }[]): void {
+  const dir = join(room, "inbox", fileName(name));
+  const unread = new Set(jsonFiles(dir).map((file) => file.slice(0, -5)));
+  if (!unread.size) return;
+  for (const entry of getEntries()) {
+    if (entry.type !== "custom_message") continue;
+    const message = entry as { type: string; customType?: string; details?: { inboxId?: string } };
+    if (message.customType !== "room_message" && message.customType !== "subagent_ping") continue;
+    const id = message.details?.inboxId;
+    if (id && unread.has(id)) acknowledgeInbox(room, name, id);
+  }
+}
+
+/** Queue oldest first; acknowledge only once Pi persists each consumed message. */
 export function drainInbox(room: string, name: string, deliver: (message: RoomMessage) => void): number {
   const dir = join(room, "inbox", fileName(name));
   let count = 0;
   for (const file of jsonFiles(dir)) {
     const path = join(dir, file);
+    if (inFlight.has(path)) continue;
     const message = readJson<RoomMessage>(path);
-    if (message) {
+    if (!message) { rmSync(path, { force: true }); continue; }
+    message.inboxId = file.slice(0, -5); // Includes mail written by older versions.
+    inFlight.add(path);
+    try {
       deliver(message);
       count++;
+    } catch (error) {
+      inFlight.delete(path);
+      throw error;
     }
-    rmSync(path, { force: true });
   }
   return count;
 }
@@ -199,17 +238,44 @@ export const ROOM_TOOL_DESCRIPTION =
   "receive messages. If ending your turn ends your run, replies sent after that are lost: do not end a turn just " +
   "to wait for a reply. Use it to answer a child's question, give follow-up instructions, share findings, or coordinate; not for chatter.";
 
-function memberLine(m: Member, self?: string): string {
+export interface RoomActivity {
+  busy: boolean;
+  tools: Array<{ name: string; startedAt: number }>;
+}
+
+export function publishRoomActivity(room: string, name: string, activity: RoomActivity): void {
+  const dir = join(room, "activity");
+  mkdirSync(dir, { recursive: true });
+  writeAtomic(join(dir, `${fileName(name)}.json`), activity);
+}
+
+export function roomDeliveryStatus(target: Target): string {
+  const activity = readJson<RoomActivity>(join(target.room, "activity", `${fileName(target.to)}.json`));
+  if (activity && !activity.busy) return `delivered: ${target.to} (idle)`;
+  const tool = activity?.tools[0];
+  return tool
+    ? `queued: ${target.to} busy in ${tool.name} for ${Math.max(0, Math.floor((Date.now() - tool.startedAt) / 1000))}s`
+    : `queued: ${target.to} ${activity ? "busy in agent turn" : "activity unknown"}`;
+}
+
+function inboxLabel(room: string, name: string): string {
+  const dir = join(room, "inbox", fileName(name));
+  const unread = jsonFiles(dir).map((file) => readJson<RoomMessage>(join(dir, file))).filter((m): m is RoomMessage => !!m);
+  const oldest = unread.length ? Math.max(0, Math.floor((Date.now() - Math.min(...unread.map((m) => m.ts))) / 1000)) : 0;
+  return `unread ${unread.length}, oldest ${unread.length ? `${oldest}s` : "—"}`;
+}
+
+function memberLine(room: string, m: Member, self?: string): string {
   const tag = m.name === self ? " (you)" : "";
-  return `• ${m.name}${tag}${m.agent ? ` [${m.agent}]` : ""} — ${m.status}: ${m.task.split("\n")[0].slice(0, 120)}`;
+  return `• ${m.name}${tag}${m.agent ? ` [${m.agent}]` : ""} — ${m.status}; ${inboxLabel(room, m.name)}: ${m.task.split("\n")[0].slice(0, 120)}`;
 }
 
 export function formatRoster(s: Scopes): string {
   const parts: string[] = [];
-  if (s.up) parts.push(`Your parent's room (address the host as "${HOST}"):\n${readMembers(s.up).map((m) => memberLine(m, s.self)).join("\n")}`);
+  if (s.up) parts.push(`Your parent's room (address the host as "${HOST}"):\n• ${HOST} — ${inboxLabel(s.up, HOST)}\n${readMembers(s.up).map((m) => memberLine(s.up!, m, s.self)).join("\n")}`);
   if (s.own) {
     const children = readMembers(s.own);
-    if (children.length) parts.push(`Your children:\n${children.map((m) => memberLine(m)).join("\n")}`);
+    if (children.length) parts.push(`Your children:\n${children.map((m) => memberLine(s.own!, m)).join("\n")}`);
   }
   return parts.join("\n\n") || "No parent and no children: nobody to message.";
 }

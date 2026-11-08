@@ -2,6 +2,7 @@
 name: delegate
 description: General-purpose helper for focused delegated tasks. Can multi-task if needed.
 model: openai-codex/gpt-6.1-sol
+fallbackModel: anthropic/claude-opus-5-5
 thinking: high
 deny-tools: ask, goal
 system-prompt: append

@@ -45,7 +45,10 @@ import {
   type SubagentActivityState,
 } from "./activity.ts";
 import { findLastAssistantMessage, getNewEntries } from "./session.ts";
+import { preflightAuth } from "./auth.ts";
+import { isProviderRefusal } from "./refusal.ts";
 import {
+  acknowledgePersistedInbox,
   drainInbox,
   formatRoomMessage,
   formatRoster,
@@ -58,6 +61,9 @@ import {
   pruneRooms,
   readMembers,
   roomDir,
+  roomDeliveryStatus,
+  publishRoomActivity,
+  releaseInbox,
   updateMember,
   writeMember,
 } from "./room.ts";
@@ -78,6 +84,8 @@ import {
 import {
   isTmuxAvailable,
   pollForExit,
+  readStatusSidecar,
+  silentDeath,
   sendEscape,
   shellEscape,
   tmuxSetupHint,
@@ -117,6 +125,7 @@ export interface AgentDefinition {
   name: string;
   description?: string;
   model?: string;
+  fallbackModel?: string;
   thinking?: string;
   tools?: string;
   denyTools?: string;
@@ -159,6 +168,7 @@ export function parseAgentDefinition(content: string, fallbackName: string): Age
     name: frontmatterValue(fm, "name") ?? fallbackName,
     description: frontmatterValue(fm, "description"),
     model: frontmatterValue(fm, "model"),
+    fallbackModel: frontmatterValue(fm, "fallbackModel"),
     thinking: frontmatterValue(fm, "thinking"),
     tools: frontmatterValue(fm, "tools"),
     denyTools: frontmatterValue(fm, "deny-tools"),
@@ -497,6 +507,7 @@ interface LaunchContext {
   /** Parent model/thinking, used when the agent definition pins no model. */
   inheritedModel?: string;
   inheritedThinking?: string;
+  modelRegistry: ExtensionContext["modelRegistry"];
 }
 
 /**
@@ -555,8 +566,15 @@ export function buildChildScript(o: {
   if (spec.cwd) lines.push(`cd ${shellEscape(spec.cwd)} || { echo 1 > ${statusFile}; exit 1; }`);
   // The spawner's own room must not leak into the child.
   lines.push("unset PI_ROOM");
-  lines.push(`${env.join(" ")} ${parts.join(" ")}`);
-  lines.push(`echo $? > ${statusFile}`);
+  // Pipe stderr through a bounded writer; keep stdout/terminal interaction unchanged.
+  const stderrWriter = `const fs = require("node:fs"); let tail = Buffer.alloc(0); const file = process.argv[1]; fs.writeFileSync(file, tail); process.stdin.on("data", chunk => { tail = Buffer.concat([tail, chunk]).subarray(-65536); fs.writeFileSync(file, tail); });`;
+  lines.push(`exec 3> >(node -e ${shellEscape(stderrWriter)} ${shellEscape(`${o.sessionFile}.stderr`)})`);
+  lines.push("stderr_pid=$!");
+  lines.push(`${env.join(" ")} ${parts.join(" ")} 2>&3 3>&-`);
+  lines.push("child_status=$?");
+  // Publish process exit before waiting: descendants may have inherited stderr's pipe.
+  lines.push(`echo "$child_status" > ${statusFile}`);
+  lines.push("exec 3>&-", 'wait "$stderr_pid"');
   if (spec.lead) lines.push(`tmux kill-session -t "$(tmux display-message -p -t "$TMUX_PANE" '#{session_id}')"`);
   return lines.join("\n") + "\n";
 }
@@ -633,6 +651,7 @@ function closeChild(running: Pick<RunningSubagent, "surface" | "sessionId">): vo
 }
 
 async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise<RunningSubagent> {
+  const signal = moduleAbortSignal();
   const def = loadAgentDefinition(params.agent);
   if (!def) throw new Error(`Agent "${params.agent}" not found.`);
 
@@ -647,6 +666,8 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
 
   const cwd = params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd;
   const { effectiveAgentDir, agentDirEnv } = resolveSubagentPaths(cwd);
+  await preflightAuth(effectiveModel, ctx.modelRegistry, effectiveAgentDir, agentConfigDir());
+  signal.throwIfAborted();
   const sessionDir = sessionDirFor(cwd, effectiveAgentDir);
 
   // Deterministic child session path: no race when several children start at once.
@@ -669,6 +690,7 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
     name: params.name,
     agent: def.name,
     model: effectiveModel && (effectiveThinking ? `${effectiveModel}:${effectiveThinking}` : effectiveModel),
+    fallbackModel: def.fallbackModel,
     systemPrompt: identityInSystemPrompt && def.body
       ? { mode: def.systemPromptMode === "replace" ? "replace" : "append", text: def.body }
       : undefined,
@@ -686,6 +708,38 @@ async function launchSubagent(params: LaunchParams, ctx: LaunchContext): Promise
   mkdirSync(dirname(artifactPath), { recursive: true });
   writeFileSync(artifactPath, fullTask, "utf8");
   return startChild({ spec, sessionFile: childSessionFile, promptArgs: [`@${artifactPath}`], task: params.task, artifactDir });
+}
+
+const resumingSessions = new Set<string>();
+
+/** Shared manual/fallback resume path. Auth completes before any process starts. */
+async function resumeChild(spec: LaunchSpec, sessionFile: string, message: string | undefined,
+  ctx: Pick<ExtensionContext, "modelRegistry" | "sessionManager">, signal = moduleAbortSignal(), task = message ?? "resumed session",
+  replacingId?: string): Promise<RunningSubagent> {
+  const tracked = () => [...runningSubagents.values()].some((child) => child.sessionFile === sessionFile && child.id !== replacingId);
+  if (tracked()) throw new Error("Session is still tracked as running/finishing; wait for completion or stop it first.");
+  if (resumingSessions.has(sessionFile)) throw new Error("Session resume already in progress.");
+  resumingSessions.add(sessionFile);
+  try {
+    await preflightAuth(spec.model, ctx.modelRegistry, spec.agentDir ?? agentConfigDir(), agentConfigDir());
+    signal.throwIfAborted();
+    if (tracked()) throw new Error("Session is already tracked by another watcher.");
+    const pid = liveSessionPid(sessionFile);
+    if (pid) throw new Error(`Session already open in live process ${pid}.`);
+    if (nameTaken(spec.name, sessionFile)) throw new Error(`A running subagent is already named "${spec.name}".`);
+    const artifactDir = artifactDirFor(ctx.sessionManager.getSessionDir(), ctx.sessionManager.getSessionId());
+    const promptArgs: string[] = [];
+    if (message) {
+      const file = join(artifactDir, "subagent-resume", `${slug(spec.name, "resume")}-${Date.now()}.md`);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, message, "utf8");
+      promptArgs.push(`@${file}`);
+    }
+    writeLaunchSpec(sessionFile, spec);
+    return startChild({ spec, sessionFile, promptArgs, task, artifactDir });
+  } finally {
+    resumingSessions.delete(sessionFile);
+  }
 }
 
 /** Local calendar date, e.g. "2026-10-17 (Saturday)". */
@@ -728,7 +782,7 @@ async function watchSubagent(
           ? "Sub-agent closed without calling subagent_done."
           : "Sub-agent exited without output";
     let summary = result.summary ?? (existsSync(sessionFile)
-      ? (findLastAssistantMessage(getNewEntries(sessionFile, 0)) ?? fallback)
+      ? (findLastAssistantMessage(getNewEntries(sessionFile, 0), !result.errorMessage) ?? fallback)
       : fallback);
     if (result.handedOverWindows?.length) {
       summary += `\n\nHanded tmux windows to you: ${result.handedOverWindows.join(", ")}. ` +
@@ -739,9 +793,6 @@ async function watchSubagent(
     // before releasing the pending-child blocker, not at the next 2s sweep.
     const adoptWindows = (globalThis as any)[Symbol.for("pi-tmux/adopt-windows")] as (() => void) | undefined;
     adoptWindows?.();
-    closeChild(running);
-    runningSubagents.delete(running.id);
-
     return {
       name,
       task,
@@ -754,7 +805,6 @@ async function watchSubagent(
   } catch (err: any) {
     // Aborts come from stop (child already closed) or reload/shutdown (the
     // shutdown cascade decides by tags); never close the child here.
-    runningSubagents.delete(running.id);
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
     if (signal.aborted) {
       return { name, task, summary: "Subagent cancelled.", exitCode: 1, elapsed, error: "cancelled", sessionFile };
@@ -782,7 +832,7 @@ export function resolveResultPresentation(
     return (
       `Sub-agent "${name}" failed after ${formatElapsed(result.elapsed)} ` +
       `(provider/agent error — auto-retry exhausted).\n\nError: ${result.errorMessage}\n\n` +
-      `The subagent produced no result. Retry with a new launch or resume the session.${sessionRef}`
+      `${result.summary}${sessionRef}`
     );
   }
   return result.exitCode !== 0
@@ -793,14 +843,42 @@ export function resolveResultPresentation(
 /** Wire the background watcher: results steer back into this session (pings come through the room). */
 function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
   const abort = new AbortController();
+  const signal = AbortSignal.any([abort.signal, moduleAbortSignal()]);
   running.abortController = abort;
   startWidgetRefresh();
   startStatusRefresh(pi);
 
   watchSubagent(running, abort.signal)
-    .then((result) => {
+    .then(async (result) => {
+      if (signal.aborted || running.stopRequested) return;
+      closeChild(running);
+      const saved = readLaunchSpec(running.sessionFile);
+      if (result.errorMessage && isProviderRefusal(result.errorMessage) && saved?.fallbackModel && !saved.fallbackUsed && latestCtx) {
+        // Consume budget durably before any await: restart/reload cannot switch twice.
+        const attempted = { ...saved, fallbackUsed: true, fallbackFrom: saved.model };
+        writeLaunchSpec(running.sessionFile, attempted);
+        try {
+          // closeChild signals termination; wait for the actual writer to leave /proc.
+          const deadline = Date.now() + 5000;
+          while (liveSessionPid(running.sessionFile) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            signal.throwIfAborted();
+          }
+          const next = await resumeChild({ ...attempted, model: saved.fallbackModel }, running.sessionFile, "continue", latestCtx, signal, running.task, running.id);
+          runningSubagents.delete(running.id);
+          trackSubagent(pi, next);
+          updateWidget();
+          return; // Only the final attempt delivers completion.
+        } catch (error) {
+          if (signal.aborted || running.stopRequested) return;
+          result.summary += `\n\nFallback to ${saved.fallbackModel} could not start: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      if (saved?.fallbackUsed && saved.fallbackFrom && saved.model !== saved.fallbackFrom) {
+        result.summary += `\n\nModel switch: ${saved.fallbackFrom} → ${saved.model} (provider refusal; automatic fallback used once).`;
+      }
+      runningSubagents.delete(running.id);
       updateWidget();
-      if (running.stopRequested) return;
 
       pi.sendMessage(
         {
@@ -823,8 +901,9 @@ function trackSubagent(pi: ExtensionAPI, running: RunningSubagent) {
       endMember(running, result.exitCode !== 0 || result.errorMessage ? "failed" : "done", result.summary);
     })
     .catch((err) => {
+      if (signal.aborted || running.stopRequested) return;
+      runningSubagents.delete(running.id);
       updateWidget();
-      if (running.stopRequested) return;
       pi.sendMessage(
         {
           customType: "subagent_result",
@@ -925,12 +1004,30 @@ function adoptHandoff(pi: ExtensionAPI): void {
   const parked = g[RELOAD_HANDOFF_KEY] as RunningSubagent[] | undefined;
   delete g[RELOAD_HANDOFF_KEY];
   if (!parked?.length || !isTmuxAvailable()) return;
+  const lost: Array<Pick<RunningSubagent, "name" | "sessionFile">> = [];
   for (const running of parked) {
     if (runningSubagents.has(running.id)) continue;
-    // Pane gone during the reload: pollForExit still reports it from the sidecars.
+    if (!isPaneAlive(running.surface) && !liveSessionPid(running.sessionFile) && !existsSync(`${running.sessionFile}.exit`)) {
+      lost.push(running);
+      continue;
+    }
+    // Known completion sidecars still deliver normally.
     runningSubagents.set(running.id, running);
     trackSubagent(pi, running);
   }
+  reportLost(pi, lost);
+}
+
+function reportLost(pi: ExtensionAPI, lost: Array<Pick<RunningSubagent, "name" | "sessionFile">>): void {
+  if (!lost.length) return;
+  const lines = lost.map((member) => {
+    const diagnostic = `Exit code ${readStatusSidecar(member.sessionFile)} (-1 = unknown).\n${silentDeath(member.sessionFile)}`;
+    endMember(member, "lost", diagnostic);
+    return `• ${member.name}\n  Resume: pi --session ${shellEscape(member.sessionFile)}\n` +
+      `  Or tmux_subagent({ action: "resume", sessionPath: ${JSON.stringify(member.sessionFile)}, message: "continue" })\n${diagnostic}`;
+  });
+  pi.sendMessage({ customType: "subagent_lost", content: `Lost subagents (no live pane/process):\n${lines.join("\n\n")}`, display: true, details: { lost } },
+    { triggerTurn: true, deliverAs: "steer" });
 }
 
 /**
@@ -943,9 +1040,14 @@ function adoptRoomMembers(pi: ExtensionAPI): void {
   if (!hostRoom || !isTmuxAvailable()) return;
   const ownedPanes = new Set(ownedWindows("@pi_subagent").map((w) => w.paneId));
   const sessions = new Set(ownedSessions());
+  const lost: Array<Pick<RunningSubagent, "name" | "sessionFile">> = [];
   for (const member of readMembers(hostRoom)) {
     if (member.status !== "running" || runningSubagents.has(member.id)) continue;
     const owned = member.sessionId ? sessions.has(member.sessionId) : ownedPanes.has(member.surface);
+    if ((!owned || !isPaneAlive(member.surface)) && !liveSessionPid(member.sessionFile) && !existsSync(`${member.sessionFile}.exit`)) {
+      lost.push(member);
+      continue;
+    }
     const running: RunningSubagent = {
       id: member.id,
       name: member.name,
@@ -965,6 +1067,7 @@ function adoptRoomMembers(pi: ExtensionAPI): void {
     runningSubagents.set(running.id, running);
     trackSubagent(pi, running);
   }
+  reportLost(pi, lost);
 }
 
 /** Child → host room messages (incl. caller_ping) steer into this session. */
@@ -999,6 +1102,38 @@ function roomScopes(): Scopes {
 
 /** The one agent-to-agent channel: parent, siblings, own children. Registered in every process. */
 function registerRoomTool(pi: ExtensionAPI): void {
+  // Each process publishes activity for both addresses: its host and its parent-room membership.
+  const tools = new Map<string, { name: string; startedAt: number }>();
+  let busy = false;
+  const publish = () => {
+    const scopes = roomScopes();
+    const activity = { busy, tools: [...tools.values()] };
+    try { if (scopes.own) publishRoomActivity(scopes.own, HOST, activity); } catch {}
+    try { if (scopes.up) publishRoomActivity(scopes.up, scopes.self, activity); } catch {}
+  };
+  const acknowledge = (ctx: ExtensionContext) => {
+    const scopes = roomScopes();
+    if (scopes.own) acknowledgePersistedInbox(scopes.own, HOST, () => ctx.sessionManager.getEntries());
+    if (scopes.up) acknowledgePersistedInbox(scopes.up, scopes.self, () => ctx.sessionManager.getEntries());
+  };
+  pi.on("session_start", (_event, ctx) => { acknowledge(ctx); busy = !ctx.isIdle(); tools.clear(); publish(); });
+  pi.on("before_provider_request", (_event, ctx) => acknowledge(ctx));
+  pi.on("before_agent_start", () => { busy = true; publish(); });
+  pi.on("agent_settled", (_event, ctx) => {
+    acknowledge(ctx);
+    busy = false;
+    tools.clear();
+    const scopes = roomScopes();
+    if (scopes.own) releaseInbox(scopes.own, HOST);
+    if (scopes.up) releaseInbox(scopes.up, scopes.self);
+    publish();
+  });
+  pi.on("tool_execution_start", (event) => {
+    tools.set(event.toolCallId, { name: event.toolName, startedAt: Date.now() });
+    busy = true;
+    publish();
+  });
+  pi.on("tool_execution_end", (event) => { tools.delete(event.toolCallId); publish(); });
   pi.registerTool({
     name: "room",
     label: "Room",
@@ -1026,7 +1161,7 @@ function registerRoomTool(pi: ExtensionAPI): void {
         for (const c of runningSubagents.values()) if (c.name === t.to) c.awaitingReply = false;
       }
       const names = targets.map((t) => t.to);
-      return reply(`Queued for ${names.join(", ")}. Do not wait for a reply; continue your task.`, { to: names });
+      return reply(`${targets.map(roomDeliveryStatus).join("\n")}. Do not wait for a reply; continue your task.`, { to: names });
     },
     renderCall(args, theme) {
       const a = args as { action?: string; to?: string; message?: string };
@@ -1110,6 +1245,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
     promptSnippet:
       "Spawn sub-agents in tmux with tmux_subagent({ name, task, agent }). " + LAUNCH_CONTRACT,
     parameters: SubagentParams,
+    executionMode: "sequential",
 
     async execute(_toolCallId, params: SubagentToolParams, _signal, _onUpdate, ctx) {
       const action = params.action ?? "launch";
@@ -1246,23 +1382,8 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
         if (nameTaken(spec.name, params.sessionPath)) {
           return reply(`A running subagent is already named "${spec.name}". Pass another name.`, { error: "name taken" }, true);
         }
-        writeLaunchSpec(params.sessionPath, spec);
-        const artifactDir = artifactDirFor(ctx.sessionManager.getSessionDir(), ctx.sessionManager.getSessionId());
-        const promptArgs: string[] = [];
-        if (params.message) {
-          const messageFile = join(artifactDir, "subagent-resume", `${slug(spec.name, "resume")}-${Date.now()}.md`);
-          mkdirSync(dirname(messageFile), { recursive: true });
-          writeFileSync(messageFile, params.message, "utf8");
-          promptArgs.push(`@${messageFile}`);
-        }
         try {
-          running = startChild({
-            spec,
-            sessionFile: params.sessionPath,
-            promptArgs,
-            task: params.message ?? "resumed session",
-            artifactDir,
-          });
+          running = await resumeChild(spec, params.sessionPath, params.message, ctx);
         } catch (error: any) {
           const message = `Resume failed: ${error?.message ?? String(error)}`;
           return reply(message, { error: message }, true);
@@ -1302,6 +1423,7 @@ export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
             cwd: ctx.cwd,
             inheritedModel: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
             inheritedThinking: ctx.thinkingLevel,
+            modelRegistry: ctx.modelRegistry,
           },
         );
       } catch (error: any) {

@@ -2,6 +2,7 @@
 name: reviewer
 description: Critical code reviewer; evidence-backed findings, writes only handoff and report documents
 model: openai-codex/gpt-6.1-sol
+fallbackModel: anthropic/claude-opus-5-5
 thinking: high
 tools: read, bash, write, lsp, codemode, tmux_subagent, tmux, room
 system-prompt: replace

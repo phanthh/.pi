@@ -5,7 +5,7 @@
  * - A role's `spawns:` list limits which agents it may launch or resume (env PI_SUBAGENT_SPAWNS).
  * - Each launch persists its resolved spec beside the session, so resume re-applies the role.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 export function csv(value: string | undefined): string[] {
   return [...new Set((value ?? "").split(",").map((s) => s.trim()).filter(Boolean))];
@@ -42,6 +42,10 @@ export interface LaunchSpec {
   agent: string;
   /** `provider/model[:thinking]` passed to `--model`. */
   model?: string;
+  fallbackModel?: string;
+  /** Durable one-switch budget, preserved across manual resume and host restart. */
+  fallbackUsed?: boolean;
+  fallbackFrom?: string;
   systemPrompt?: { mode: "append" | "replace"; text: string };
   /** Final `--tools` value, control tools included. */
   tools?: string;
@@ -61,7 +65,14 @@ export function launchSpecFile(sessionFile: string): string {
 }
 
 export function writeLaunchSpec(sessionFile: string, spec: LaunchSpec): void {
-  writeFileSync(launchSpecFile(sessionFile), JSON.stringify(spec, null, 2), "utf8");
+  const file = launchSpecFile(sessionFile);
+  const temp = `${file}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    writeFileSync(temp, JSON.stringify(spec, null, 2), "utf8");
+    renameSync(temp, file);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }
 
 export function readLaunchSpec(sessionFile: string): LaunchSpec | null {

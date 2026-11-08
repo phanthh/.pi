@@ -4,7 +4,9 @@
  * sessions) and the exit/status sidecar polling.
  */
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { getNewEntries, lastSessionActivity } from "./session.ts";
+import { liveSessionPid } from "./room.ts";
 import { isPaneAlive } from "@pi-ext/tmux-windows";
 
 let tmuxOnPath: boolean | null = null;
@@ -71,28 +73,41 @@ function readExitSidecar(sessionFile: string): PollResult | null {
     const exitFile = `${sessionFile}.exit`;
     if (!existsSync(exitFile)) return null;
     const data = JSON.parse(readFileSync(exitFile, "utf8"));
-    rmSync(exitFile, { force: true });
-    return interpretExitSidecar(data);
+    return interpretExitSidecar(data); // Retain until next launch; reload/crash must not lose completion.
   } catch {
     return null;
   }
 }
 
-/** Exit code the launch script wrote after pi returned; 0 when absent (killed from outside). */
+/** Exit code from launch script; -1 means unknown (script/pane killed externally). */
 export function readStatusSidecar(sessionFile: string): number {
   const file = `${sessionFile}.status`;
   try {
     const raw = readFileSync(file, "utf8").trim();
-    rmSync(file, { force: true });
-    return /^\d+$/.test(raw) ? Number(raw) : 0;
+    return /^\d+$/.test(raw) ? Number(raw) : -1;
   } catch {
-    return 0;
+    return -1;
   }
 }
 
+export function silentDeath(sessionFile: string): string {
+  let stderr = "(no stderr captured)";
+  let fd: number | undefined;
+  try {
+    fd = openSync(`${sessionFile}.stderr`, "r");
+    const size = fstatSync(fd).size;
+    const tail = Buffer.alloc(Math.min(size, 65536));
+    readSync(fd, tail, 0, tail.length, Math.max(0, size - tail.length));
+    stderr = tail.toString("utf8").trimEnd().split("\n").slice(-30).join("\n") || stderr;
+  } catch {} finally { if (fd !== undefined) closeSync(fd); }
+  let activity = "Last session entry: unavailable.";
+  try { activity = lastSessionActivity(getNewEntries(sessionFile, 0)); } catch {}
+  return `No .exit sidecar. ${activity}\n\nLast stderr lines (up to 30):\n${stderr}`;
+}
+
 /**
- * Poll until the child exits: `.exit` sidecar (clean exits), else pane gone,
- * with the script's `.status` exit code telling a crash from a plain quit.
+ * Poll until the child exits: `.exit` sidecar, else `.status` (pi returned) or
+ * dead pane plus no live session process. Shell/stderr descendants cannot hide a crash.
  */
 export async function pollForExit(
   surface: string,
@@ -109,10 +124,11 @@ export async function pollForExit(
     const sidecar = readExitSidecar(options.sessionFile);
     if (sidecar) return sidecar;
 
-    if (!isPaneAlive(surface)) {
+    if ((existsSync(`${options.sessionFile}.status`) || !isPaneAlive(surface)) && !liveSessionPid(options.sessionFile)) {
       const late = readExitSidecar(options.sessionFile);
       if (late) return late;
-      return { reason: "closed", exitCode: readStatusSidecar(options.sessionFile) };
+      const exitCode = readStatusSidecar(options.sessionFile);
+      return { reason: "closed", exitCode, summary: `Sub-agent ended without an exit sidecar (exit code ${exitCode}${exitCode === -1 ? "; unknown" : ""}).\n${silentDeath(options.sessionFile)}` };
     }
 
     options.onTick?.();
