@@ -40,7 +40,7 @@ extensions/
 | `up-history` | native editor Up/Down history | seeds latest 30 unique saved user prompts for current cwd; preserves custom editor, honors custom session dirs, TUI-only. No settings/commands/history files |
 | `usage` | footer status + `/usage` | Claude (main + anthropic-auth fallbacks), Codex, OpenCode Go subscription windows; polls TTL-gated via shared `~/.pi/agent/cache/usage.json`, live updates from `after_provider_response` headers + Codex `codex.rate_limits` stream events. Has `README.md` |
 | `web-fetch` | `web_fetch` tool | wreq-js TLS impersonation + defuddle extraction |
-| `web-search` | `web_search` tool | parallel SearXNG + DuckDuckGo HTML (wreq-js TLS); URL-normalized dedupe, interleaved source-labelled results, backend failure notes/fallback; page > 1 SearXNG-only, categories SearXNG-only, time range both. SearXNG URL: `~/.pi/agent/web-search.json` → `SEARXNG_URL` → localhost:8888; per-backend cross-process spacing (`minIntervalMs`, default 1500) via `$TMPDIR/pi-web-search{,-ddg}.next`. Has `README.md` |
+| `web-search` | `web_search` tool | SearXNG; base URL from `~/.pi/agent/web-search.json` → `SEARXNG_URL` → localhost:8888; cross-process request spacing (`minIntervalMs`, default 1500) via `$TMPDIR/pi-web-search.next` |
 
 ## Conventions
 
