@@ -5,6 +5,7 @@
 	"main": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
-		"./widget": "./src/widget.ts"
+		"./widget": "./src/widget.ts",
+		"./activity": "./src/activity.ts"
 	}
 }

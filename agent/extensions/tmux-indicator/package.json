@@ -4,5 +4,8 @@
 	"type": "module",
 	"pi": {
 		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"@pi-ext/tmux-windows": "workspace:*"
 	}
 }

@@ -7,7 +7,7 @@ No-op outside tmux (`$TMUX` / `$TMUX_PANE` unset).
 |---|---|---|
 | `waiting` | blocking UI prompt open (`ask`, confirm, select, ...) | `bg=#bb9af7` |
 | `error` | last run ended with `stopReason: "error"`; held until next run | `bg=#f7768e` |
-| `running` | agent run, auto-retry backoff, compaction | `bg=#e0af68` |
+| `running` | agent run, auto-retry backoff, compaction, or idle with live `tmux` tool runs / `tmux_subagent` children | `bg=#e0af68` |
 | `idle` | session start, run settled, run aborted (Esc) | `bg=#9ece6a` |
 
 All defaults use `fg=#1a1b26`.
@@ -19,6 +19,9 @@ All defaults use `fg=#1a1b26`.
   `window-status-style`. Order: `waiting` > `error` > `running` > `idle`. Tie: lowest pane index.
 - Subagent children that are not leads (`PI_SUBAGENT_ID` set, `PI_SUBAGENT_LEAD` not set) add the
   `dim` attribute. The top-level pi (depth 0) and lead children do not.
+- Background work: `tmux` and `tmux-subagents` register live counts in a shared registry
+  (`@pi-ext/tmux-windows/activity`). pi polls it every 1s. Idle with count > 0 → `running`.
+  `error` and `waiting` are not overridden.
 - `window-status-current-style` is not changed. The focused tab keeps its normal style.
 - Quit: pi unsets its pane option and recomputes the window. No pi panes left: window option unset
   (global style applies). `/reload`, new, resume, fork: state is applied again on `session_start`.

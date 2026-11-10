@@ -23,6 +23,7 @@ import { truncateTail, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-wo
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { closeWindow, createWindow, handoverWindow, isPaneAlive, ownedWindows, setWindowOption, userShell, viaUserShell, windowOption } from "@pi-ext/tmux-windows";
+import { registerBackgroundActivity } from "@pi-ext/tmux-windows/activity";
 import { formatElapsedMMSS, renderBox, SECTION_ORDER, setStackSection } from "@pi-ext/tmux-windows/widget";
 import { blockReason, findBlockedTmuxCommand } from "./guard.ts";
 import { registerResurrect } from "./resurrect.ts";
@@ -114,6 +115,8 @@ export default function (pi: ExtensionAPI) {
 	const finished = (state.finished ??= new Set<string>());
 	// tmux-subagents' child.ts holds auto-exit while any of these are pending.
 	g[Symbol.for("pi-tmux/auto-exit-watchers")] = watchers;
+	// tmux-indicator keeps the tab "running" while any run window is live.
+	registerBackgroundActivity("tmux", () => [...runs.values()].filter((run) => run.paneId && run.statusPath).length);
 
 	// Fallback when the wait-for signal is lost, or the pane is closed outside this tool:
 	// otherwise the result is never delivered and the pane counts as pending forever.

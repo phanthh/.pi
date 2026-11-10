@@ -3,18 +3,22 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { backgroundActivityCount } from "@pi-ext/tmux-windows/activity";
 
 // Colors the tmux tab (window-status-style) of the window pi runs in by agent state.
 // Each pi publishes its state on its own pane (@pi_indicator); any pi in a window
 // recomputes the window style from all panes: waiting > error > running > idle,
 // ties → lowest pane index. window-status-current-style is left alone.
 // Non-lead subagent children (PI_SUBAGENT_ID set, PI_SUBAGENT_LEAD unset) add `dim`.
+// Idle + live background work (tmux tool runs, subagents) → running; polled.
 
 type State = "waiting" | "error" | "running" | "idle";
 type Colors = Record<State, { bg: string; fg: string }>;
 
 const PRIORITY: State[] = ["waiting", "error", "running", "idle"];
 const PANE_OPT = "@pi_indicator";
+const POLL_MS = 1000;
+const POLL_KEY = Symbol.for("pi-tmux-indicator/poll");
 const DIM = process.env.PI_SUBAGENT_ID && process.env.PI_SUBAGENT_LEAD !== "1" ? "dim" : "";
 const DEFAULTS: Colors = {
 	running: { bg: "#e0af68", fg: "#1a1b26" },
@@ -76,7 +80,26 @@ export default function tmuxIndicator(pi: ExtensionAPI) {
 		return queue;
 	};
 
-	const update = () => sync(prompts > 0 ? "waiting" : compacting ? "running" : base);
+	const current = (): State => {
+		if (prompts > 0) return "waiting";
+		if (compacting) return "running";
+		if (base === "idle" && backgroundActivityCount() > 0) return "running";
+		return base;
+	};
+	let applied: State | undefined;
+	const update = () => {
+		applied = current();
+		return sync(applied);
+	};
+
+	// Background work starts/ends without agent events: poll, sync only on change.
+	// Timer on globalThis so /reload replaces instead of stacking.
+	const g = globalThis as any;
+	clearInterval(g[POLL_KEY]);
+	g[POLL_KEY] = setInterval(() => {
+		if (applied && current() !== applied) update();
+	}, POLL_MS);
+	g[POLL_KEY].unref?.();
 
 	pi.on("session_start", (_e, c) => {
 		base = c.isIdle() ? "idle" : "running";
@@ -117,6 +140,8 @@ export default function tmuxIndicator(pi: ExtensionAPI) {
 	pi.on("session_compact_failed", endCompact);
 	// reload/new/resume/fork: next session_start re-applies; only quit clears.
 	pi.on("session_shutdown", async (e) => {
-		if (e.reason === "quit") await sync(undefined);
+		if (e.reason !== "quit") return;
+		clearInterval(g[POLL_KEY]);
+		await sync(undefined);
 	});
 }

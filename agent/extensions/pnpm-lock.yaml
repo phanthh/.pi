@@ -96,6 +96,12 @@ importers:
         specifier: workspace:*
         version: link:../tmux-windows
 
+  tmux-indicator:
+    dependencies:
+      '@pi-ext/tmux-windows':
+        specifier: workspace:*
+        version: link:../tmux-windows
+
   tmux-subagents:
     dependencies:
       '@pi-ext/tmux-windows':

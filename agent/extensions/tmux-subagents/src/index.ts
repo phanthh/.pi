@@ -28,6 +28,7 @@ import {
   sessionName,
   viaUserShell,
 } from "@pi-ext/tmux-windows";
+import { registerBackgroundActivity } from "@pi-ext/tmux-windows/activity";
 import { formatElapsedMMSS, renderBox, SECTION_ORDER, setStackSection } from "@pi-ext/tmux-windows/widget";
 import {
   allowedSpawns,
@@ -1183,6 +1184,8 @@ function registerRoomTool(pi: ExtensionAPI): void {
 }
 
 export default function tmuxSubagentsExtension(pi: ExtensionAPI) {
+  // tmux-indicator keeps the tab "running" while any child is live.
+  registerBackgroundActivity("subagents", () => runningSubagents.size);
   pi.on("session_start", (event, ctx) => {
     latestCtx = ctx;
     hostRoom = roomDir(ctx.sessionManager.getSessionId());
