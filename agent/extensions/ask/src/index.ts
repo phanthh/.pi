@@ -15,6 +15,8 @@ interface AskOption {
 	label: string;
 	value: string;
 	description?: string;
+	/** Prompt only: recommendation confidence 0-100 (0 = not recommended, 50 = unsure, 100 = certainly best). */
+	confidence?: number;
 }
 
 interface PromptQuestion {
@@ -89,12 +91,19 @@ const CommonOptionProperties = {
 	description: Type.Optional(Type.String({ description: "Optional detail shown below option." })),
 };
 
+const RECOMMENDED_LABEL = /\(\s*recommended\s*\)/i;
+
 const PromptOptionSchema = Type.Object({
-	label: Type.String({
-		description:
-			'Display label. Put the recommended option first and append "(Recommended)" to its label.',
-	}),
+	label: Type.String({ description: 'Display label. Never write "(Recommended)"; use confidence instead.' }),
 	...CommonOptionProperties,
+	confidence: Type.Optional(
+		Type.Integer({
+			minimum: 0,
+			maximum: 100,
+			description:
+				"Your recommendation confidence for this option, 0-100: 0 = not recommended, 50 = maybe best, unsure, 100 = certainly best. Scored per option, need not sum to 100.",
+		}),
+	),
 });
 
 const QuizOptionSchema = Type.Object({
@@ -151,11 +160,29 @@ function shuffled<T>(values: T[]): T[] {
 	return result;
 }
 
-function normalizeOption(raw: unknown, location: string): { option?: AskOption; error?: string } {
+function normalizeOption(
+	raw: unknown,
+	location: string,
+	kind: Question["kind"],
+): { option?: AskOption; error?: string } {
 	if (!raw || typeof raw !== "object") return { error: `${location} must be an object` };
 	const value = raw as Record<string, unknown>;
 	if (typeof value.label !== "string" || !value.label.trim()) {
 		return { error: `${location}.label must be nonempty` };
+	}
+	if (RECOMMENDED_LABEL.test(value.label)) {
+		return {
+			error:
+				kind === "quiz"
+					? `${location}.label must not recommend an answer`
+					: `${location}.label must not contain "(Recommended)"; set confidence (0-100) instead`,
+		};
+	}
+	if (value.confidence !== undefined) {
+		if (kind === "quiz") return { error: `${location}.confidence is not allowed on quiz options` };
+		if (typeof value.confidence !== "number" || !Number.isInteger(value.confidence) || value.confidence < 0 || value.confidence > 100) {
+			return { error: `${location}.confidence must be an integer from 0 to 100` };
+		}
 	}
 	if (value.value !== undefined && (typeof value.value !== "string" || !value.value.trim())) {
 		return { error: `${location}.value must be nonempty when provided` };
@@ -169,6 +196,7 @@ function normalizeOption(raw: unknown, location: string): { option?: AskOption; 
 			value: typeof value.value === "string" ? value.value.trim() : value.label.trim(),
 			description:
 				typeof value.description === "string" && value.description.trim() ? value.description.trim() : undefined,
+			confidence: typeof value.confidence === "number" ? value.confidence : undefined,
 		},
 	};
 }
@@ -206,7 +234,11 @@ export function normalizeQuestions(raw: unknown): { questions?: Question[]; erro
 
 		const options: AskOption[] = [];
 		for (let optionIndex = 0; optionIndex < ((value.options as unknown[] | undefined)?.length ?? 0); optionIndex++) {
-			const normalized = normalizeOption((value.options as unknown[])[optionIndex], `${location}.options[${optionIndex}]`);
+			const normalized = normalizeOption(
+				(value.options as unknown[])[optionIndex],
+				`${location}.options[${optionIndex}]`,
+				value.kind,
+			);
 			if (normalized.error) return { error: normalized.error };
 			options.push(normalized.option!);
 		}
@@ -278,6 +310,13 @@ function createEditorTheme(theme: any): EditorTheme {
 			noMatch: (text) => theme.fg("warning", text),
 		},
 	};
+}
+
+/** `▰▰▰▱▱ 62` badge, colored by tier: ≥75 success, ≥40 warning, else muted. */
+function confidenceBadge(theme: any, confidence: number): string {
+	const filled = Math.round(confidence / 20);
+	const color = confidence >= 75 ? "success" : confidence >= 40 ? "warning" : "muted";
+	return theme.fg(color, `${"▰".repeat(filled)}${"▱".repeat(5 - filled)} ${confidence}`);
 }
 
 function addWrapped(lines: string[], text: string, width: number, indent = ""): void {
@@ -602,7 +641,13 @@ export async function showQuestions(
 						const marker = question.multiSelect ? (checked ? "[x]" : "[ ]") : checked ? "(●)" : "( )";
 						const prefix = focused ? theme.fg("accent", "> ") : "  ";
 						const text = `${marker} ${option.label}`;
-						addWrapped(lines, focused ? theme.fg("accent", text) : theme.fg(checked ? "success" : "text", text), renderWidth, prefix);
+						const badge = option.confidence === undefined ? "" : `  ${confidenceBadge(theme, option.confidence)}`;
+						addWrapped(
+							lines,
+							(focused ? theme.fg("accent", text) : theme.fg(checked ? "success" : "text", text)) + badge,
+							renderWidth,
+							prefix,
+						);
 						if (option.description) addWrapped(lines, theme.fg("muted", option.description), renderWidth, "      ");
 					});
 					const extraFocused = state.focus === question.options.length;
@@ -689,7 +734,7 @@ export default function ask(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Gather independent questions you already know you need into one questions[] call; one ask call supports up to 8 questions.",
 			"Use prompt questions for requirements, preferences, and decisions. Omit options for free text.",
-			'For prompt options, put the recommended option first and suffix its label with "(Recommended)".',
+			'For prompt options, set confidence (integer 0-100) on each option: your confidence it is the best choice. 0 = not recommended, 50 = maybe best, unsure, 100 = certainly best. Score each option independently. Order options by confidence descending unless they have a natural order. Never write "(Recommended)" in labels.',
 			'Use quiz questions only for objective knowledge, with balanced distractors and a required explanation. Never label or describe any quiz option as "Recommended".',
 			"Quiz correctAnswer keys are option values, not labels.",
 			'Choice prompts automatically allow "Other"; quizzes instead include an exclusive "I don\'t know" choice.',

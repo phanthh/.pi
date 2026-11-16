@@ -8,7 +8,7 @@ Personal TypeScript extension workspace for [pi](https://pi.dev). Extensions run
 
 | Directory | Surface | Purpose |
 |---|---|---|
-| `ask` | `ask` tool | Structured text, single-choice, and multi-choice questions |
+| `ask` | `ask` tool | Structured text, single-choice, and multi-choice questions; prompt options carry a 0-100 recommendation `confidence` (shown as `▰▰▰▱▱ 62` badge) instead of `(Recommended)` labels |
 | [`anthropic-auth`](anthropic-auth/README.md) | Provider | Anthropic Pro/Max OAuth, Claude models, quota-aware routing, and cache controls |
 | [`context`](context/README.md) | Commands and tools | Context views, compaction, recall, memory, and idle-aware compaction |
 | `cursor-auth` | Provider | Cursor OAuth and model access |

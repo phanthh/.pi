@@ -26,7 +26,7 @@ extensions/
 
 | Dir | Surface | Notes |
 |---|---|---|
-| `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui |
+| `ask` | `ask` tool | interactive question UI (text / single / multi select), built on pi-tui; prompt options take `confidence` 0-100 (rendered badge); `(Recommended)` in labels rejected |
 | `anthropic-auth` | provider | Anthropic Pro/Max OAuth, Claude model catalog, request conversion, quota-aware routing, cache controls; internal auth/account/quota/cache/relay/routing code lives in `src/core` |
 | `context` | `/context`, `/compact`, `/recall`; `recall` tool | monolithic context management: usage/injection views, deterministic compaction/searchable history, Observer → Reflector → Dropper memory (`~/.pi/agent/om.json`), idle-aware compaction, optional agent-editable live context (`/context live on`, disabled by default). Has its own `README.md` |
 | `goal` | `/goal` + `goal` tool | pins objective in system prompt, nudges until complete/drop, token budget |
