@@ -127,7 +127,7 @@ approval may not: ask the user.
 
 ## Asking the user
 
-Use the `ask` tool, never a question in a normal message. Put all context in it:
+Use the `ask` tool with `blocking: true`, never a question in a normal message. Put all context in it:
 PR link, blocker, options with your recommendation first. Stop `pr-wait`
 first.
 

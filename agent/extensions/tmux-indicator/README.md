@@ -5,7 +5,7 @@ No-op outside tmux (`$TMUX` / `$TMUX_PANE` unset).
 
 | State | When | Default |
 |---|---|---|
-| `waiting` | blocking UI prompt open (`ask`, confirm, select, ...) | `bg=#bb9af7` |
+| `waiting` | blocking UI prompt open (`ask`, confirm, select, ...; not `/questions`, which sets `globalThis.__piNonBlockingUi`) | `bg=#bb9af7` |
 | `error` | last run ended with `stopReason: "error"`; held until next run | `bg=#f7768e` |
 | `running` | agent run, auto-retry backoff, compaction, or idle with live `tmux` tool runs / `tmux_subagent` children | `bg=#e0af68` |
 | `idle` | session start, run settled, run aborted (Esc) | `bg=#9ece6a` |

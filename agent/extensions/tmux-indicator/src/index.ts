@@ -120,11 +120,22 @@ export default function tmuxIndicator(pi: ExtensionAPI) {
 		base = !e.aborted && lastRunErrored ? "error" : "idle";
 		update();
 	});
+	// Non-blocking prompts (ask's /questions sets globalThis.__piNonBlockingUi) are not "waiting".
+	// Outer prompts never nest, so one flag pairs start with end.
+	let ignoredPrompt = false;
 	pi.on("ui_prompt_start", () => {
+		if ((globalThis as any).__piNonBlockingUi > 0) {
+			ignoredPrompt = true;
+			return;
+		}
 		prompts++;
 		update();
 	});
 	pi.on("ui_prompt_end", () => {
+		if (ignoredPrompt) {
+			ignoredPrompt = false;
+			return;
+		}
 		prompts = Math.max(0, prompts - 1);
 		update();
 	});

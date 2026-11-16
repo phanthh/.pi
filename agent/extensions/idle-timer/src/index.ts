@@ -54,10 +54,20 @@ export default function idleTimer(pi: ExtensionAPI) {
 	});
 	pi.on("agent_start", (_event, c) => stopIdle(c));
 	pi.on("agent_settled", (_event, c) => startIdle(c));
+	// Non-blocking prompts (ask's /questions sets globalThis.__piNonBlockingUi) do not block the agent.
+	let ignoredPrompt = false;
 	pi.on("ui_prompt_start", (_event, c) => {
+		if ((globalThis as any).__piNonBlockingUi > 0) {
+			ignoredPrompt = true;
+			return;
+		}
 		if (idleSince === undefined) startIdle(c);
 	});
 	pi.on("ui_prompt_end", (_event, c) => {
+		if (ignoredPrompt) {
+			ignoredPrompt = false;
+			return;
+		}
 		if (!c.isIdle()) stopIdle(c);
 	});
 	pi.on("session_shutdown", (_event, c) => stopIdle(c));

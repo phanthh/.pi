@@ -39,7 +39,7 @@ interface QuizQuestion {
 }
 
 type Question = PromptQuestion | QuizQuestion;
-type AskStatus = "answered" | "cancelled" | "unavailable";
+type AskStatus = "answered" | "queued" | "withdrawn" | "cancelled" | "unavailable";
 type PromptMode = "text" | "single-select" | "multi-select";
 
 interface PromptResponse {
@@ -73,7 +73,25 @@ interface AskResultDetails {
 	responses: AskResponse[];
 	score?: { correct: number; total: number };
 	message?: string;
+	/** Deferred questions queued by this call. */
+	queued?: { id: string; question: string }[];
 }
+
+/** Session entry (pi.appendEntry) tracking deferred questions; pending set = replay over current branch. */
+type DeferredEntry =
+	| { op: "ask"; items: { id: string; question: PromptQuestion }[] }
+	| { op: "withdraw"; ids: string[] }; // agent withdrew
+
+interface DeferredAnswer {
+	id: string;
+	response: PromptResponse;
+	dismissed: boolean;
+}
+
+const DEFERRED_ENTRY = "ask-deferred";
+const ANSWERS_MESSAGE = "ask-answers";
+/** globalThis counter > 0 while a non-blocking UI prompt is open. Read by tmux-indicator, idle-timer. */
+const NON_BLOCKING_UI_KEY = "__piNonBlockingUi";
 
 interface QuestionState {
 	focus: number;
@@ -82,6 +100,8 @@ interface QuestionState {
 	text: string;
 	other: string;
 	editingOther: boolean;
+	/** Deferred only: user left the decision to the agent. */
+	dismissed: boolean;
 }
 
 const CommonOptionProperties = {
@@ -144,11 +164,25 @@ const QuizQuestionSchema = Type.Object({
 });
 
 const AskParams = Type.Object({
-	questions: Type.Array(Type.Union([PromptQuestionSchema, QuizQuestionSchema]), {
-		minItems: 1,
-		maxItems: 8,
-		description: "One to eight independent prompt or quiz questions shown in one tabbed modal.",
-	}),
+	questions: Type.Optional(
+		Type.Array(Type.Union([PromptQuestionSchema, QuizQuestionSchema]), {
+			minItems: 1,
+			maxItems: 8,
+			description: "One to eight independent prompt or quiz questions. Omit when using withdraw.",
+		}),
+	),
+	blocking: Type.Optional(
+		Type.Boolean({
+			description:
+				"true = pause until the user answers now. Default false = deferred: questions queue, call returns at once, answers arrive later as a message. Quizzes always block.",
+		}),
+	),
+	withdraw: Type.Optional(
+		Type.Array(Type.String(), {
+			minItems: 1,
+			description: "Ids of pending deferred questions (e.g. D3) that became moot. Use without questions.",
+		}),
+	),
 });
 
 function shuffled<T>(values: T[]): T[] {
@@ -251,7 +285,7 @@ export function normalizeQuestions(raw: unknown): { questions?: Question[]; erro
 			question: value.question.trim(),
 			details: typeof value.details === "string" && value.details.trim() ? value.details.trim() : undefined,
 			options,
-			multiSelect: value.multiSelect === true,
+			multiSelect: value.multiSelect === true && options.length > 0,
 		};
 		if (value.kind === "prompt") {
 			questions.push({ kind: "prompt", ...common, required: value.required !== false });
@@ -333,8 +367,13 @@ function promptMode(question: PromptQuestion): PromptMode {
 
 function isAnswered(question: Question, state: QuestionState): boolean {
 	if (question.kind === "quiz") return state.dontKnow || state.selected.size > 0;
-	if (question.options.length === 0) return state.text.trim().length > 0;
+	// Deferred free text is typed via the "Answer" row, which stores into `other`.
+	if (question.options.length === 0) return state.text.trim().length > 0 || state.other.trim().length > 0;
 	return state.selected.size > 0 || state.other.trim().length > 0;
+}
+
+function isResolved(question: Question, state: QuestionState): boolean {
+	return state.dismissed || isAnswered(question, state);
 }
 
 function canSubmit(questions: Question[], states: QuestionState[]): boolean {
@@ -371,20 +410,38 @@ function responseFor(question: Question, state: QuestionState): AskResponse {
 		answered: isAnswered(question, state),
 		selectedValues,
 		selectedLabels,
-		...(question.options.length === 0 && state.text.trim() ? { text: state.text.trim() } : {}),
-		...(state.other.trim() ? { other: state.other.trim() } : {}),
+		...(question.options.length === 0
+			? state.text.trim() || state.other.trim()
+				? { text: state.text.trim() || state.other.trim() }
+				: {}
+			: state.other.trim()
+				? { other: state.other.trim() }
+				: {}),
 	};
+}
+
+function promptAnswerText(response: PromptResponse): string {
+	if (!response.answered) return "Answer: (unanswered)";
+	if (response.mode === "text") return `Answer: ${response.text}`;
+	const values = [...response.selectedValues, ...(response.other ? [`Other: ${response.other}`] : [])];
+	return `Answer values: ${values.join(", ")}`;
+}
+
+function promptAnswerLabels(response: PromptResponse): string {
+	return response.mode === "text"
+		? (response.text ?? "")
+		: [...response.selectedLabels, ...(response.other ? [`Other: ${response.other}`] : [])].join(", ");
+}
+
+function oneLine(text: string, max = 160): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
 function resultText(responses: AskResponse[], score: { correct: number; total: number }): string {
 	const lines = responses.map((response, index) => {
 		const prefix = `Q${index + 1}: ${response.question}`;
-		if (response.kind === "prompt") {
-			if (!response.answered) return `${prefix}\nAnswer: (unanswered)`;
-			if (response.mode === "text") return `${prefix}\nAnswer: ${response.text}`;
-			const values = [...response.selectedValues, ...(response.other ? [`Other: ${response.other}`] : [])];
-			return `${prefix}\nAnswer values: ${values.join(", ")}`;
-		}
+		if (response.kind === "prompt") return `${prefix}\n${promptAnswerText(response)}`;
 		const selected = response.dontKnow ? "I don't know" : response.selectedValues.join(", ");
 		return `${prefix}\nSelected values: ${selected}\nCorrect values: ${response.correctValues.join(", ")}\nCorrect: ${response.correct ? "yes" : "no"}\nExplanation: ${response.explanation}`;
 	});
@@ -407,11 +464,19 @@ function cancelledResult() {
 	};
 }
 
+/**
+ * `deferred`: user-opened answer view over pending deferred prompts. Partial submit, a
+ * "Dismiss" row per question, free text via an "Answer" row, tab labels = `labels`, and no
+ * `blocked` status (nobody is waiting on it).
+ */
 export async function showQuestions(
 	ctx: ExtensionContext,
 	questions: Question[],
 	signal?: AbortSignal,
+	opts?: { deferred?: boolean; labels?: string[] },
 ): Promise<QuestionState[] | null> {
+	const deferred = opts?.deferred === true;
+	const submittable = (states: QuestionState[]) => deferred || canSubmit(questions, states);
 	return ctx.ui.custom<QuestionState[] | null>((tui: any, theme: any, _kb: any, done: (result: QuestionState[] | null) => void) => {
 		let finished = false;
 		const finish = (result: QuestionState[] | null) => {
@@ -435,6 +500,7 @@ export async function showQuestions(
 			text: "",
 			other: "",
 			editingOther: false,
+			dismissed: false,
 		}));
 		const editors = questions.map(() => new Editor(tui, createEditorTheme(theme)));
 
@@ -450,7 +516,8 @@ export async function showQuestions(
 		}
 
 		const isFreeText = (index: number) =>
-			questions[index].kind === "prompt" && questions[index].options.length === 0;
+			!deferred && questions[index].kind === "prompt" && questions[index].options.length === 0;
+		const hasDismissRow = (question: Question) => deferred && question.kind === "prompt";
 		const isEditing = (index: number) =>
 			index < questions.length && (isFreeText(index) || states[index].editingOther);
 
@@ -467,6 +534,7 @@ export async function showQuestions(
 			}
 			state.other = trimmed;
 			state.editingOther = false;
+			if (trimmed) state.dismissed = false;
 			if (trimmed && !question.multiSelect) state.selected.clear();
 			return Boolean(trimmed);
 		}
@@ -503,7 +571,7 @@ export async function showQuestions(
 
 			if (currentTab === questions.length) {
 				if (matchesKey(data, Key.enter)) {
-					if (canSubmit(questions, states)) finish(states);
+					if (submittable(states)) finish(states);
 					else {
 						submitWarning = true;
 						refresh();
@@ -521,7 +589,7 @@ export async function showQuestions(
 				return;
 			}
 
-			const itemCount = question.options.length + 1;
+			const itemCount = question.options.length + 1 + (hasDismissRow(question) ? 1 : 0);
 			if (matchesKey(data, Key.up)) {
 				state.focus = Math.max(0, state.focus - 1);
 				refresh();
@@ -534,8 +602,16 @@ export async function showQuestions(
 			}
 
 			const isExtra = state.focus === question.options.length;
+			const isDismiss = hasDismissRow(question) && state.focus === question.options.length + 1;
 			const toggle = () => {
-				if (question.kind === "quiz" && isExtra) {
+				if (isDismiss) {
+					state.dismissed = !state.dismissed;
+					if (state.dismissed) {
+						state.selected.clear();
+						state.other = "";
+						editor.setText("");
+					}
+				} else if (question.kind === "quiz" && isExtra) {
 					state.selected.clear();
 					state.dontKnow = true;
 				} else if (question.kind === "prompt" && isExtra) {
@@ -549,10 +625,12 @@ export async function showQuestions(
 					}
 				} else if (question.multiSelect) {
 					state.dontKnow = false;
+					state.dismissed = false;
 					if (state.selected.has(state.focus)) state.selected.delete(state.focus);
 					else state.selected.add(state.focus);
 				} else {
 					state.dontKnow = false;
+					state.dismissed = false;
 					state.other = "";
 					state.selected.clear();
 					state.selected.add(state.focus);
@@ -566,7 +644,7 @@ export async function showQuestions(
 			}
 			if (matchesKey(data, Key.enter)) {
 				toggle();
-				if (!question.multiSelect && !state.editingOther) advance();
+				if ((!question.multiSelect || (isDismiss && state.dismissed)) && !state.editingOther) advance();
 			}
 		}
 
@@ -578,8 +656,9 @@ export async function showQuestions(
 
 			add(theme.fg("accent", "─".repeat(renderWidth)));
 			const tabs = questions.map((question, index) => {
-				const complete = isAnswered(question, states[index]);
-				const label = `${complete ? "■" : "□"} Q${index + 1}`;
+				const complete = isResolved(question, states[index]);
+				const mark = states[index].dismissed ? "×" : complete ? "■" : "□";
+				const label = `${mark} ${opts?.labels?.[index] ?? `Q${index + 1}`}`;
 				return index === currentTab
 					? theme.bg("selectedBg", theme.fg("text", ` ${label} `))
 					: theme.fg(complete ? "success" : "muted", ` ${label} `);
@@ -588,7 +667,7 @@ export async function showQuestions(
 			tabs.push(
 				currentTab === questions.length
 					? theme.bg("selectedBg", theme.fg("text", submitLabel))
-					: theme.fg(canSubmit(questions, states) ? "success" : "dim", submitLabel),
+					: theme.fg(submittable(states) ? "success" : "dim", submitLabel),
 			);
 			addWrapped(lines, tabs.join(" "), renderWidth, " ");
 			lines.push("");
@@ -598,18 +677,27 @@ export async function showQuestions(
 				lines.push("");
 				questions.forEach((question, index) => {
 					const state = states[index];
-					let summary = "(unanswered)";
-					if (question.kind === "prompt" && question.options.length === 0 && state.text) summary = state.text;
+					let summary = deferred ? "(stays pending)" : "(unanswered)";
+					if (state.dismissed) summary = "Dismissed — agent decides";
+					else if (question.kind === "prompt" && question.options.length === 0) summary = state.text || state.other || summary;
 					else if (state.dontKnow) summary = "I don't know";
 					else {
 						const labels = [...state.selected].sort((a, b) => a - b).map((i) => question.options[i]?.label);
 						if (state.other) labels.push(`Other: ${state.other}`);
 						if (labels.length) summary = labels.join(", ");
 					}
-					addWrapped(lines, theme.fg("muted", `Q${index + 1}: `) + theme.fg("text", summary), renderWidth, " ");
+					const label = opts?.labels?.[index] ?? `Q${index + 1}`;
+					addWrapped(lines, theme.fg("muted", `${label}: `) + theme.fg("text", summary), renderWidth, " ");
 				});
 				lines.push("");
-				if (canSubmit(questions, states)) add(theme.fg("success", " Press Enter to submit"));
+				if (deferred) {
+					const resolved = questions.filter((question, index) => isResolved(question, states[index])).length;
+					add(
+						resolved
+							? theme.fg("success", ` Press Enter to send ${resolved}; the rest stay pending`)
+							: theme.fg("muted", " Nothing answered yet; Esc closes"),
+					);
+				} else if (canSubmit(questions, states)) add(theme.fg("success", " Press Enter to submit"));
 				else {
 					const missing = questions
 						.map((question, index) => ({ question, index }))
@@ -631,7 +719,7 @@ export async function showQuestions(
 				}
 				lines.push("");
 
-				if (question.kind === "prompt" && question.options.length === 0) {
+				if (isFreeText(currentTab)) {
 					add(theme.fg("muted", " Your answer:"));
 					for (const line of editors[currentTab].render(Math.max(1, renderWidth - 2))) add(` ${line}`);
 				} else {
@@ -654,16 +742,27 @@ export async function showQuestions(
 					const isOther = question.kind === "prompt";
 					const extraChecked = isOther ? Boolean(state.other) : state.dontKnow;
 					const marker = question.multiSelect ? (extraChecked ? "[x]" : "[ ]") : extraChecked ? "(●)" : "( )";
-					const label = isOther ? `Other${state.other ? ` — ${state.other}` : ""}` : "I don't know";
+					const otherName = question.options.length === 0 ? "Answer" : "Other";
+					const label = isOther ? `${otherName}${state.other ? ` — ${state.other}` : ""}` : "I don't know";
 					addWrapped(
 						lines,
 						extraFocused ? theme.fg("accent", `${marker} ${label}`) : theme.fg(extraChecked ? "success" : "text", `${marker} ${label}`),
 						renderWidth,
 						extraFocused ? theme.fg("accent", "> ") : "  ",
 					);
+					if (hasDismissRow(question)) {
+						const focused = state.focus === question.options.length + 1;
+						const text = `${question.multiSelect ? (state.dismissed ? "[x]" : "[ ]") : state.dismissed ? "(●)" : "( )"} Dismiss — agent decides`;
+						addWrapped(
+							lines,
+							focused ? theme.fg("accent", text) : theme.fg(state.dismissed ? "warning" : "muted", text),
+							renderWidth,
+							focused ? theme.fg("accent", "> ") : "  ",
+						);
+					}
 					if (state.editingOther) {
 						lines.push("");
-						add(theme.fg("muted", " Other answer:"));
+						add(theme.fg("muted", question.options.length === 0 ? " Your answer:" : " Other answer:"));
 						for (const line of editors[currentTab].render(Math.max(1, renderWidth - 2))) add(` ${line}`);
 					}
 				}
@@ -674,9 +773,10 @@ export async function showQuestions(
 				lines,
 				theme.fg(
 					"dim",
-					isEditing(currentTab)
-						? "Enter save • Tab/Shift-Tab tabs • Esc cancel all"
-						: "Tab/Shift-Tab or ←→ tabs • ↑↓ select • Space toggle multi • Enter select/save • Esc cancel all",
+					(isEditing(currentTab)
+						? "Enter save • Tab/Shift-Tab tabs"
+						: "Tab/Shift-Tab or ←→ tabs • ↑↓ select • Space toggle multi • Enter select/save") +
+						(deferred ? " • Esc close (nothing sent)" : " • Esc cancel all"),
 				),
 				renderWidth,
 				" ",
@@ -694,7 +794,7 @@ export async function showQuestions(
 			},
 			handleInput,
 		};
-	}, {
+	}, deferred ? undefined : {
 		blocked: {
 			kind: "question",
 			message: questions.length === 1 ? questions[0].question : `${questions.length} questions`,
@@ -723,19 +823,201 @@ function getSharedUiLock() {
 }
 const sharedUiLock = getSharedUiLock();
 
+type SessionCtx = Pick<ExtensionContext, "sessionManager">;
+
+function deferredEntries(entries: ReturnType<SessionCtx["sessionManager"]["getEntries"]>): DeferredEntry[] {
+	const result: DeferredEntry[] = [];
+	for (const entry of entries) {
+		if (entry.type === "custom" && entry.customType === DEFERRED_ENTRY && entry.data) result.push(entry.data as DeferredEntry);
+	}
+	return result;
+}
+
+/**
+ * Answers submitted via /questions but not yet in the session. A steered message can still be
+ * dropped (Esc clears the agent queue), so answered = an `ask-answers` message on the branch;
+ * until then ids are only hidden. Cleared on agent_settled → dropped ones become pending again.
+ */
+const inFlight = new Set<string>();
+
+/** Pending deferred questions on the current branch, oldest first. */
+function pendingQuestions(ctx: SessionCtx): { id: string; question: PromptQuestion }[] {
+	const pending = new Map<string, PromptQuestion>();
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type === "custom_message" && entry.customType === ANSWERS_MESSAGE) {
+			for (const answer of (entry.details as { answers?: DeferredAnswer[] } | undefined)?.answers ?? []) {
+				pending.delete(answer.id);
+			}
+			continue;
+		}
+		if (entry.type !== "custom" || entry.customType !== DEFERRED_ENTRY || !entry.data) continue;
+		const data = entry.data as DeferredEntry;
+		if (data.op === "ask") for (const item of data.items) pending.set(item.id, item.question);
+		else for (const id of data.ids) pending.delete(id);
+	}
+	return [...pending].filter(([id]) => !inFlight.has(id)).map(([id, question]) => ({ id, question }));
+}
+
+/** Ids are unique across the whole session (all branches), so a D-number never means two questions. */
+function nextDeferredNumber(ctx: SessionCtx): number {
+	let max = 0;
+	for (const data of deferredEntries(ctx.sessionManager.getEntries())) {
+		if (data.op !== "ask") continue;
+		for (const item of data.items) max = Math.max(max, Number(item.id.slice(1)) || 0);
+	}
+	return max + 1;
+}
+
+function answersText(answers: DeferredAnswer[]): string {
+	const blocks = answers.map(
+		(answer) =>
+			`${answer.id}: ${answer.response.question}\n${answer.dismissed ? "Dismissed: user left this to you; decide yourself." : promptAnswerText(answer.response)}`,
+	);
+	return `User answered deferred ask questions. Reconcile any work done under different assumptions.\n\n${blocks.join("\n\n")}`;
+}
+
 export default function ask(pi: ExtensionAPI) {
+	const showPendingStatus = (ctx: ExtensionContext) => {
+		const count = pendingQuestions(ctx).length;
+		ctx.ui.setStatus("ask", count ? `❓ ${count}` : undefined);
+	};
+
+	pi.on("session_start", async (_event, ctx) => {
+		inFlight.clear();
+		showPendingStatus(ctx);
+	});
+	// Queues are delivered or cleared by now: answers that never landed become pending again.
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!inFlight.size) return;
+		inFlight.clear();
+		showPendingStatus(ctx);
+	});
+	pi.on("session_tree", async (_event, ctx) => showPendingStatus(ctx));
+
+	// Keeps pending ids visible after compaction so the agent can withdraw instead of re-asking.
+	pi.on("before_agent_start", async (event, ctx) => {
+		const sections = event.systemPromptOptions.sections;
+		const pending = pendingQuestions(ctx);
+		if (!pending.length) {
+			delete sections.pending_questions;
+			return;
+		}
+		sections.pending_questions = [
+			"Deferred ask questions still waiting for the user. Answers arrive later as a message. Do not re-ask them. Withdraw moot ones with ask({ withdraw: [ids] }).",
+			...pending.map(({ id, question }) => `- ${id}: ${oneLine(question.question)}`),
+		].join("\n");
+	});
+
+	pi.registerMessageRenderer<{ answers?: DeferredAnswer[] }>(ANSWERS_MESSAGE, (message, _options, theme) => {
+		const lines = [theme.fg("accent", theme.bold("↩ deferred answers"))];
+		for (const answer of message.details?.answers ?? []) {
+			lines.push(theme.fg("accent", `${answer.id}: ${answer.response.question}`));
+			lines.push(
+				answer.dismissed
+					? theme.fg("warning", "  × dismissed — agent decides")
+					: `${theme.fg("success", "✓ ")}${promptAnswerLabels(answer.response)}`,
+			);
+		}
+		return new Text(lines.join("\n"), 0, 0);
+	});
+
+	pi.registerCommand("questions", {
+		description: "Answer or dismiss pending deferred ask questions",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI || ctx.mode !== "tui") {
+				ctx.ui.notify("/questions requires interactive TUI mode", "error");
+				return;
+			}
+			await sharedUiLock.withLock(async () => {
+				const pending = pendingQuestions(ctx);
+				if (!pending.length) {
+					ctx.ui.notify("No pending questions.", "info");
+					return;
+				}
+				// Pi emits ui_prompt_start for every ctx.ui.custom; this flag tells waiting-state
+				// consumers (tmux-indicator, idle-timer) that nobody is blocked on this one.
+				const g = globalThis as any;
+				g[NON_BLOCKING_UI_KEY] = (g[NON_BLOCKING_UI_KEY] ?? 0) + 1;
+				const states = await showQuestions(
+					ctx,
+					pending.map((item) => item.question),
+					undefined,
+					{ deferred: true, labels: pending.map((item) => item.id) },
+				).finally(() => {
+					g[NON_BLOCKING_UI_KEY]--;
+				});
+				if (!states) return;
+				// Agent may have withdrawn some while the modal was open: drop those answers.
+				const stillPending = new Set(pendingQuestions(ctx).map((item) => item.id));
+				const answers: DeferredAnswer[] = [];
+				pending.forEach(({ id, question }, index) => {
+					const state = states[index];
+					if (!stillPending.has(id) || !isResolved(question, state)) return;
+					answers.push({ id, response: responseFor(question, state) as PromptResponse, dismissed: state.dismissed });
+				});
+				if (!answers.length) return;
+				for (const answer of answers) inFlight.add(answer.id);
+				showPendingStatus(ctx);
+				// steer → lands mid-run before the next LLM call; triggerTurn → wakes an idle agent.
+				pi.sendMessage(
+					{ customType: ANSWERS_MESSAGE, content: answersText(answers), display: true, details: { answers } },
+					{ deliverAs: "steer", triggerTurn: true },
+				);
+			});
+		},
+	});
+
+	const withdraw = (raw: unknown, ctx: ExtensionContext) => {
+		if (!Array.isArray(raw) || raw.length === 0 || raw.some((id) => typeof id !== "string" || !id.trim())) {
+			return unavailableResult("Invalid ask request: withdraw must be a nonempty array of ids");
+		}
+		const ids = [...new Set(raw.map((id) => (id as string).trim()))];
+		const pending = pendingQuestions(ctx).map((item) => item.id);
+		const unknown = ids.filter((id) => !pending.includes(id));
+		if (unknown.length) {
+			return unavailableResult(`Not pending: ${unknown.join(", ")}. Pending: ${pending.join(", ") || "(none)"}`);
+		}
+		pi.appendEntry<DeferredEntry>(DEFERRED_ENTRY, { op: "withdraw", ids });
+		showPendingStatus(ctx);
+		const rest = pending.filter((id) => !ids.includes(id));
+		const message = `Withdrawn: ${ids.join(", ")}. Still pending: ${rest.join(", ") || "(none)"}`;
+		return {
+			content: [{ type: "text" as const, text: message }],
+			details: { status: "withdrawn", responses: [], message } as AskResultDetails,
+		};
+	};
+
+	const queue = (questions: PromptQuestion[], ctx: ExtensionContext) => {
+		const start = nextDeferredNumber(ctx);
+		const items = questions.map((question, index) => ({ id: `D${start + index}`, question }));
+		pi.appendEntry<DeferredEntry>(DEFERRED_ENTRY, { op: "ask", items });
+		showPendingStatus(ctx);
+		const ids = items.map((item) => item.id).join(", ");
+		const text = `Queued deferred questions: ${ids}. The user answers later; answers arrive as a message. Continue other work now, or stop if these questions block all progress. Withdraw moot ones with ask({ withdraw: [ids] }).`;
+		return {
+			content: [{ type: "text" as const, text }],
+			details: {
+				status: "queued",
+				responses: [],
+				queued: items.map((item) => ({ id: item.id, question: item.question.question })),
+			} as AskResultDetails,
+		};
+	};
+
 	pi.registerTool({
 		name: "ask",
 		label: "ask",
 		description:
-			"Ask up to 8 independent questions in one tabbed batch. Mix prompts for requirements/preferences with quizzes for objective knowledge. Gather independent known questions into one questions[] call instead of separate calls.",
+			"Ask the user up to 8 independent questions in one tabbed batch. Default is deferred: questions queue for the user, the call returns at once with ids, and answers arrive later as a message. blocking: true pauses until the user answers. Quizzes always block. withdraw: [ids] removes pending questions that became moot.",
 		promptSnippet:
-			"Use ask with questions[] to gather up to 8 known clarifications, preferences, decisions, or objective quiz answers in one call.",
+			"Use ask with questions[] for clarifications, preferences, decisions, or quizzes. Deferred by default (non-blocking); blocking: true waits for the answer.",
 		promptGuidelines: [
 			"Gather independent questions you already know you need into one questions[] call; one ask call supports up to 8 questions.",
+			"ask is deferred by default: use it for non-urgent decisions, keep doing other work, and reconcile when answers arrive as a message. Set blocking: true only when the next step depends on the answer and no other useful work remains.",
+			"Never re-ask a pending deferred question. Withdraw ones that became moot with ask({ withdraw: [ids] }).",
 			"Use prompt questions for requirements, preferences, and decisions. Omit options for free text.",
 			'For prompt options, set confidence (integer 0-100) on each option: your confidence it is the best choice. 0 = not recommended, 50 = maybe best, unsure, 100 = certainly best. Score each option independently. Order options by confidence descending unless they have a natural order. Never write "(Recommended)" in labels.',
-			'Use quiz questions only for objective knowledge, with balanced distractors and a required explanation. Never label or describe any quiz option as "Recommended".',
+			'Use quiz questions only for objective knowledge, with balanced distractors and a required explanation. Never label or describe any quiz option as "Recommended". Quizzes always block.',
 			"Quiz correctAnswer keys are option values, not labels.",
 			'Choice prompts automatically allow "Other"; quizzes instead include an exclusive "I don\'t know" choice.',
 			"Prefer ask over guessing when requirements, preferences, or implementation choices are unclear.",
@@ -744,10 +1026,23 @@ export default function ask(pi: ExtensionAPI) {
 		executionMode: "sequential",
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const normalized = normalizeQuestions(params.questions);
+			const raw = params as Record<string, unknown>;
+			if ((raw.questions === undefined) === (raw.withdraw === undefined)) {
+				return unavailableResult("Invalid ask request: pass exactly one of questions or withdraw");
+			}
+			if (raw.blocking !== undefined && typeof raw.blocking !== "boolean") {
+				return unavailableResult("Invalid ask request: blocking must be a boolean");
+			}
+			if (!ctx.hasUI || ctx.mode !== "tui") return unavailableResult("ask requires interactive TUI mode");
+			if (raw.withdraw !== undefined) return withdraw(raw.withdraw, ctx);
+
+			const normalized = normalizeQuestions(raw.questions);
 			if (!normalized.questions) return unavailableResult(`Invalid ask request: ${normalized.error}`);
 			if (signal?.aborted) return cancelledResult();
-			if (!ctx.hasUI || ctx.mode !== "tui") return unavailableResult("ask requires interactive TUI mode");
+			const questions = normalized.questions;
+			if (raw.blocking !== true && questions.every((question) => question.kind === "prompt")) {
+				return queue(questions as PromptQuestion[], ctx);
+			}
 
 			// Waiting for the shared lock must stay cancellable; the queued fn still runs
 			// later, sees the abort, and releases the lock in order.
@@ -756,9 +1051,9 @@ export default function ask(pi: ExtensionAPI) {
 			});
 			const run = sharedUiLock.withLock(async () => {
 				if (signal?.aborted) return cancelledResult();
-				const states = await showQuestions(ctx, normalized.questions!, signal);
+				const states = await showQuestions(ctx, questions, signal);
 				if (signal?.aborted || !states) return cancelledResult();
-				const responses = normalized.questions!.map((question, index) => responseFor(question, states[index]));
+				const responses = questions.map((question, index) => responseFor(question, states[index]));
 				const quizResponses = responses.filter((response): response is QuizResponse => response.kind === "quiz");
 				const score = {
 					correct: quizResponses.filter((response) => response.correct).length,
@@ -773,8 +1068,16 @@ export default function ask(pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme) {
+			const title = theme.fg("toolTitle", theme.bold("ask "));
+			if (Array.isArray(args.withdraw)) {
+				return new Text(title + theme.fg("muted", `withdraw ${args.withdraw.join(", ")}`), 0, 0);
+			}
 			const questions = Array.isArray(args.questions) ? args.questions : [];
-			let text = theme.fg("toolTitle", theme.bold("ask ")) + theme.fg("muted", `${questions.length} question${questions.length === 1 ? "" : "s"}`);
+			const blocking = args.blocking === true || questions.some((raw) => (raw as { kind?: unknown } | undefined)?.kind === "quiz");
+			let text =
+				title +
+				theme.fg("muted", `${questions.length} question${questions.length === 1 ? "" : "s"}`) +
+				theme.fg("dim", blocking ? " · blocking" : " · deferred");
 			for (let index = 0; index < questions.length; index++) {
 				const raw = questions[index];
 				const question = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : undefined;
@@ -791,6 +1094,14 @@ export default function ask(pi: ExtensionAPI) {
 				const first = result.content[0];
 				return new Text(first?.type === "text" ? first.text : "", 0, 0);
 			}
+			if (details.status === "queued") {
+				const lines = (details.queued ?? []).map(
+					(item) => `${theme.fg("warning", "⧗ ")}${theme.fg("accent", item.id)} ${theme.fg("muted", item.question)}`,
+				);
+				lines.push(theme.fg("dim", "  answer via /questions"));
+				return new Text(lines.join("\n"), 0, 0);
+			}
+			if (details.status === "withdrawn") return new Text(theme.fg("muted", details.message ?? "withdrawn"), 0, 0);
 			if (details.status !== "answered") {
 				return new Text(theme.fg("warning", details.message || "ask unavailable"), 0, 0);
 			}
@@ -800,11 +1111,7 @@ export default function ask(pi: ExtensionAPI) {
 				lines.push(theme.fg("accent", `Q${index + 1}: ${response.question}`));
 				if (response.kind === "prompt") {
 					if (!response.answered) lines.push(theme.fg("muted", "  (unanswered)"));
-					else if (response.mode === "text") lines.push(`${theme.fg("success", "✓ ")}${response.text}`);
-					else {
-						const answers = [...response.selectedLabels, ...(response.other ? [`Other: ${response.other}`] : [])];
-						lines.push(`${theme.fg("success", "✓ ")}${answers.join(", ")}`);
-					}
+					else lines.push(`${theme.fg("success", "✓ ")}${promptAnswerLabels(response)}`);
 				} else {
 					const selected = response.dontKnow ? "I don't know" : response.selectedLabels.join(", ");
 					lines.push(`${theme.fg(response.correct ? "success" : "warning", response.correct ? "✓" : "✗")} ${selected}`);
