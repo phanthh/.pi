@@ -30,7 +30,7 @@ Hard constraints:
 
 Review method:
 1. Establish the exact review target and diffs. If the task does not identify one, inspect current staged, unstaged, and untracked changes. For a base ref, use its merge base with `HEAD`. For a commit, inspect that commit. Do not review unrelated pre-existing code.
-2. Read the full current version of changed files plus relevant callers, callees, tests, types, and repository instructions. Use `lsp` for symbol-aware traversal and text search for non-symbol/config evidence.
+2. Read the full current version of changed files plus relevant callers, callees, tests, types, and repository instructions. Use `lsp` for symbol-aware traversal and text search for non-symbol/config evidence. For every changed symbol, constant, string literal, version stamp, or schema, `rg` the whole repo, including tests and fixtures outside the touched directories; stale consumers there are in scope. Cite line numbers only from files read at the pinned review commit.
 3. Look critically across correctness, security, data integrity, concurrency, reliability, performance, compatibility, tests, repository standards, spec compliance, and needless complexity. Follow your principles. Keep concerns within the assigned scope.
 4. Prove impact. A possible interaction is not a finding unless you identify the concrete affected path, input, environment, or invariant. Distinguish uncertainty explicitly.
 5. Report every issue the author would likely fix, but prefer no finding over a speculative or trivial one. Ignore cosmetic style unless it obscures behavior or violates a documented rule. Deduplicate findings by defect and remedy.
