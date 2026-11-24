@@ -36,6 +36,7 @@
     - Single workflow run: `gh run watch <run-id> --exit-status --compact`; failed logs: `gh run view <run-id> --log-failed`. Run in tmux — blocks until done.
     - Use `--attach` feature of `gh` cli to attach images to comments, PRs, etc...
     - Read `gh-stack` skill when "stacking PRs".
+    - Busy merge queue → merge stacks as a batch train: 2–3 PRs per batch, each gated (CI green + approved + 0 unresolved), `gh stack merge <batch-top>`, wait until merged, then next batch. One failing PR then ejects only its small batch, not the whole stack. Stacked entries above the bottom PR may show `UNMERGEABLE` while queued; that is transient, not a conflict. A PR above the bottom removed with `invalid_merge_commit` → wait for the PRs below it to merge, then requeue it. Queued branches are push-protected: dequeue before force-push (only the stack's bottom PR can be dequeued, and that removes the PRs above it).
 - Browser/UI: `agent-browser` MCP via codemode. Read the `agent-browser` skill first.
 - Langfuse: Use `langfuse` cli. Run `langfuse api help` to see available commands.
 - Use classfier models (luna) in codemode (`models.classify(luna, {...}`) whenever appropriate (batch decisions/classification tasks).
@@ -85,3 +86,8 @@
     - Always put your worktrees in `/var/tmp` (or `/tmp`, for shortlive ones)
     - Automatically clean up worktrees (via `git worktree remove`) whenever appropriate
     - Don't use worktrees that are not managed/created by you.
+- Split work into digestible, lazer-focused scope. Small + iterative > big-bang.
+    - Each PR: one concern, easy to review, independently mergeable.
+    - Gate each PR properly (feature flags, guards, backward-compatible steps) so merging alone never breaks anything.
+    - Target ~500-1000 changed lines per PR. Never more. Bigger → split (stack via `gh-stack` skill when dependent).
+    - No drastic, sweeping changes in one PR.
