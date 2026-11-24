@@ -62,6 +62,9 @@
     - Fallback to `/var/tmp` if runout of RAM space. Remember to clean up afterward.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
     - Exception: every agent (subagents included) may append to `~/.pi/agent/complains.md`. Append only (bash `cat >> ... <<'EOF'`); never rewrite, edit or delete existing entries. No bash → list complaints in your final result for the parent to append.
+    - Before appending: `rg -i <keywords> ~/.pi/agent/complains.md`. Same issue already there → append nothing, unless you have NEW facts (then one line: `- <date> re "<existing heading>": <new fact>`).
+    - Format: `## <date> — <component>: <title>` + ≤5 bullets (symptom w/ exact error, impact, suggested fix). One issue per entry.
+    - Not a complaint: caveats the tool already prints (e.g. lsp "no venv" notes), repo/product bugs of the task itself, your own mistakes (fix your habit instead).
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Automatically clean up notes/temporary files after use to free up space, whenever appropriate
 
@@ -83,9 +86,19 @@
         - It's on YOU if your subagents fucked something up. So be critical of you subagents.
 - If appropriate, prefer to use git worktrees for isolated tasks:
     - Use alongside subagents whenever appropriate
-    - Always put your worktrees in `/var/tmp` (or `/tmp`, for shortlive ones)
+    - Always put your worktrees in `/var/tmp`. Never `/tmp`: it is a 32G RAM tmpfs; venvs + node_modules fill it.
     - Automatically clean up worktrees (via `git worktree remove`) whenever appropriate
     - Don't use worktrees that are not managed/created by you.
+- Shared clones/worktrees (parallel agents share one `.git`):
+    - No `git stash` (stash is repo-wide). No `git config` writes (they land in the shared `.git/config`); use `git -c key=val` per command.
+    - Fetch only refs you need (`git fetch origin main`); concurrent broad fetches race on ref locks.
+    - Briefs to subagents pin exact SHAs, not moving refs like `origin/main`.
+    - Per-agent scratch dir: `/tmp/<agent-or-task-name>/`. Never reuse generic shared names.
+- Shell hygiene:
+    - `cmd | tail` hides cmd's exit code → `set -o pipefail` or check `${PIPESTATUS[0]}`. Test wrappers must propagate the real exit code.
+    - Non-interactive git: `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true` for rebase/commit; else bash hangs on the editor.
+    - Never print `.env`/credential files; mask values (`sed 's/=.*/=***/'`).
+    - GitHub REST quota (5000/h) is shared by all agents: `gh run watch --interval 30`, never the 3s default.
 - Split work into digestible, lazer-focused scope. Small + iterative > big-bang.
     - Each PR: one concern, easy to review, independently mergeable.
     - Gate each PR properly (feature flags, guards, backward-compatible steps) so merging alone never breaks anything.

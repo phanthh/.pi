@@ -25,6 +25,10 @@ description: Rules for any text posted on GitHub (PR titles/descriptions, PR com
 - Write the body to a file and post with `--body-file`, so quoting and blank
   lines render as written. Verify GitHub returned the comment URL.
 - Never post a comment that does not serve the user's request.
+- Never comment on PRs or issues you do not own ("please merge", "this unblocks
+  #X") unless the user asks. It pings the author for nothing.
+- GitHub writes are not idempotent. After an API error, re-read state before a
+  retry (a failed `gh pr close --comment` can still post the comment).
 
 ## No loose ends
 
