@@ -1,5 +1,8 @@
 import type { AccountStorage } from './accounts.ts'
-import { isClaudeFable51Model } from './models.ts'
+import {
+  isClaudeFable51Model,
+  isClaudeFableOrMythos52Model,
+} from './models.ts'
 
 export const THINKING_BINDING_CONTROLS_BETA =
   'thinking-binding-controls-2026-08-01'
@@ -49,7 +52,13 @@ export function applyThinkingBindingControls(
   behavior: ThinkingPrefixMismatchBehavior = 'account-default',
 ) {
   if (behavior === 'account-default') return false
-  if (!isClaudeFable51Model(body.model)) return false
+  // Fable 5.1 and Fable/Mythos 5.2 accept block_binding. 5.2 returns 400 on a
+  // failed prefix check unless prefix_mismatch_behavior is drop_block.
+  if (
+    !isClaudeFable51Model(body.model) &&
+    !isClaudeFableOrMythos52Model(body.model)
+  )
+    return false
   if (!hasReplayableThinkingBlocks(body)) return false
   if (!isRecord(body.thinking) || body.thinking.type === 'disabled')
     return false

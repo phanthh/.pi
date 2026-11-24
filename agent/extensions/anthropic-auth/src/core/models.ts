@@ -2,6 +2,8 @@ export const CLAUDE_FABLE_5_MODEL_ID = 'claude-fable-5'
 export const CLAUDE_MYTHOS_5_MODEL_ID = 'claude-mythos-5'
 export const CLAUDE_FABLE_5_1_MODEL_ID = 'claude-fable-5-1'
 export const CLAUDE_MYTHOS_5_1_MODEL_ID = 'claude-mythos-5-1'
+export const CLAUDE_FABLE_5_2_MODEL_ID = 'claude-fable-5-2'
+export const CLAUDE_MYTHOS_5_2_MODEL_ID = 'claude-mythos-5-2'
 
 /**
  * Haiku 4.5 model identifier used by `/claude-prime` to start each OAuth
@@ -31,10 +33,16 @@ export const CLAUDE_FABLE_MYTHOS_5_1_MODEL_IDS = [
   CLAUDE_MYTHOS_5_1_MODEL_ID,
 ] as const
 
+export const CLAUDE_FABLE_MYTHOS_5_2_MODEL_IDS = [
+  CLAUDE_FABLE_5_2_MODEL_ID,
+  CLAUDE_MYTHOS_5_2_MODEL_ID,
+] as const
+
 export const CLAUDE_FABLE_MYTHOS_5_MODEL_IDS = [
   CLAUDE_FABLE_5_MODEL_ID,
   CLAUDE_MYTHOS_5_MODEL_ID,
   ...CLAUDE_FABLE_MYTHOS_5_1_MODEL_IDS,
+  ...CLAUDE_FABLE_MYTHOS_5_2_MODEL_IDS,
 ] as const
 
 export type ClaudeFableMythos5ModelId =
@@ -61,10 +69,20 @@ export const CLAUDE_FABLE_MYTHOS_5_1_PRICING = {
   cacheWrite1h: 20,
 } as const
 
+/** Fable/Mythos 5.2: $8/$40, cache read 0.025x, 5m write 1.25x, 1h write 2x. */
+export const CLAUDE_FABLE_MYTHOS_5_2_PRICING = {
+  input: 8,
+  output: 40,
+  cacheRead: 0.2,
+  cacheWrite5m: 10,
+  cacheWrite1h: 16,
+} as const
+
 export const CLAUDE_FABLE_MYTHOS_5_CONTEXT_WINDOW = 1_000_000
 export const CLAUDE_FABLE_MYTHOS_5_MAX_OUTPUT_TOKENS = 128_000
 export const CLAUDE_FABLE_MYTHOS_5_RELEASE_DATE = '2026-06-09'
 export const CLAUDE_FABLE_MYTHOS_5_1_RELEASE_DATE = '2026-09-01'
+export const CLAUDE_FABLE_MYTHOS_5_2_RELEASE_DATE = '2026-11-09'
 
 export const CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS: Record<
   ClaudeFableMythos5ModelId,
@@ -86,6 +104,15 @@ export const CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS: Record<
   [CLAUDE_MYTHOS_5_1_MODEL_ID]: {
     id: CLAUDE_MYTHOS_5_1_MODEL_ID,
     name: 'Claude Mythos 5.1',
+    limited: true,
+  },
+  [CLAUDE_FABLE_5_2_MODEL_ID]: {
+    id: CLAUDE_FABLE_5_2_MODEL_ID,
+    name: 'Claude Fable 5.2',
+  },
+  [CLAUDE_MYTHOS_5_2_MODEL_ID]: {
+    id: CLAUDE_MYTHOS_5_2_MODEL_ID,
+    name: 'Claude Mythos 5.2',
     limited: true,
   },
 }
@@ -116,6 +143,14 @@ export function isClaudeFableOrMythos51Model(model: unknown) {
   )
 }
 
+export function isClaudeFableOrMythos52Model(model: unknown) {
+  if (typeof model !== 'string') return false
+  const normalized = normalizeAnthropicModelId(model)
+  return CLAUDE_FABLE_MYTHOS_5_2_MODEL_IDS.some(
+    (id) => normalized === id || normalized.startsWith(`${id}-`),
+  )
+}
+
 export function isClaudeFable51Model(model: unknown) {
   if (typeof model !== 'string') return false
   const normalized = normalizeAnthropicModelId(model)
@@ -126,6 +161,8 @@ export function isClaudeFable51Model(model: unknown) {
 }
 
 export function getClaudeFableMythos5ReleaseDate(model: unknown) {
+  if (isClaudeFableOrMythos52Model(model))
+    return CLAUDE_FABLE_MYTHOS_5_2_RELEASE_DATE
   return isClaudeFableOrMythos51Model(model)
     ? CLAUDE_FABLE_MYTHOS_5_1_RELEASE_DATE
     : CLAUDE_FABLE_MYTHOS_5_RELEASE_DATE

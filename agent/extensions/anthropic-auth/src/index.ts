@@ -1,12 +1,14 @@
 import {
   authorize,
   CLAUDE_FABLE_MYTHOS_5_1_PRICING,
+  CLAUDE_FABLE_MYTHOS_5_2_PRICING,
   CLAUDE_FABLE_MYTHOS_5_CONTEXT_WINDOW,
   CLAUDE_FABLE_MYTHOS_5_MAX_OUTPUT_TOKENS,
   CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS,
   CLAUDE_FABLE_MYTHOS_5_PRICING,
   exchange,
   isClaudeFableOrMythos51Model,
+  isClaudeFableOrMythos52Model,
   type MidConversationEffortTransition,
   refreshClaudeOAuthToken,
 } from './core/index.ts'
@@ -110,9 +112,11 @@ export default function cortexKitPiAnthropicAuth(pi: ExtensionAPI) {
     api: 'cortexkit-anthropic-messages',
     models: [
       ...Object.values(CLAUDE_FABLE_MYTHOS_5_MODEL_SPECS).map((model) => {
-        const pricing = isClaudeFableOrMythos51Model(model.id)
-          ? CLAUDE_FABLE_MYTHOS_5_1_PRICING
-          : CLAUDE_FABLE_MYTHOS_5_PRICING
+        const pricing = isClaudeFableOrMythos52Model(model.id)
+          ? CLAUDE_FABLE_MYTHOS_5_2_PRICING
+          : isClaudeFableOrMythos51Model(model.id)
+            ? CLAUDE_FABLE_MYTHOS_5_1_PRICING
+            : CLAUDE_FABLE_MYTHOS_5_PRICING
         return {
           id: model.id,
           name: model.name,
