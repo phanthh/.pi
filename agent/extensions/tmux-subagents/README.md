@@ -199,9 +199,9 @@ Bundled behavior that results:
 
 | Agent | Model | lead / interactive | May launch |
 | --- | --- | --- | --- |
-| `delegate` | `gpt-6.1-sol:high` | yes / yes | anything (`ask`, `goal` denied, inherited) |
-| `reviewer` | `gpt-6.1-sol:high` | no / no | `scout`, `researcher` |
-| `researcher` | `gpt-6-luna:high` | no / no | nothing |
+| `delegate` | `gpt-6.2-sol:high` | yes / yes | anything (`ask`, `goal` denied, inherited) |
+| `reviewer` | `gpt-6.2-sol:high` | no / no | `scout`, `researcher` |
+| `researcher` | `gpt-6.1-terra:high` | no / no | nothing |
 | `scout` | `gpt-6-luna:high` | no / no | nothing |
 
 Policy (`policy.ts`), at any depth:

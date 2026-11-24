@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: External web research; produces a focused, well-sourced brief
-model: openai-codex/gpt-6-luna
+model: openai-codex/gpt-6.1-terra
 thinking: high
 tools: read, web_search, web_fetch, write, codemode, room
 system-prompt: replace
