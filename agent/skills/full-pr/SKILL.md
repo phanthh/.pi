@@ -16,10 +16,11 @@ Allowed on this task's branch: commit, push, rebase, fix conflicts,
 `--force-with-lease`. Never merge, enable auto-merge, enter a merge queue, push
 to the default branch, bypass branch protection, or delegate any of these.
 
-Before work begins, and again before each push: disable auto-merge
-(`gh pr merge <n> --disable-auto`) and remove the PR from any merge queue.
-Report these changes. Cannot prevent automatic merging → report the blocker
-before going on.
+Before work begins and before each push on an existing PR, check
+`gh pr view <n> --json autoMergeRequest`. Null → already disabled; otherwise
+run `gh pr merge <n> --disable-auto` and confirm null. Check queue membership
+and remove the PR if queued. Report changes. Cannot prevent automatic merging →
+report the blocker before going on.
 
 ## Stop at the gate
 
@@ -27,9 +28,11 @@ Use full-land's merge gate as the readiness check. Replace its merge and report
 steps with a handoff. Proof and review must cover the final diff; recheck
 behavior changes and meaningful conflict fixes before handoff.
 
-Fetch the base, then check the live PR: head, base, checks, reviews,
-mergeability. Confirm it is open, not a draft, and not set to merge without the
-user. Someone else merged it → report that.
+Check the live PR: head, base, checks, reviews, mergeability. Rebase only on
+DIRTY, BEHIND (strict checks), or to repair a prior queue failure/drop, not
+merely because the base moved or touches PR files. Confirm it is open, not a
+draft, and not set to merge without the user. Someone else merged it → report
+that.
 
 - **Ready to merge:** gate passes. Leave the PR open and unmerged.
 - **Waiting for required approval:** only human approval remains. Confirm that

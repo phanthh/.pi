@@ -32,9 +32,9 @@ approval prompts.
    branch first. Dirty tree with unrelated work → use a worktree in `/var/tmp`.
 2. **Prove it.** See "Proof".
 3. **Review loop** with the `reviewer` subagent. See "Review loop".
-4. **File the PR** with `file-pr`. Rebase onto the latest default branch first.
-   Add one short line on how you proved the change, plus the review outcome
-   (rounds, verdict) in a collapsed `<details>` block.
+4. **File the PR** with `file-pr`. Add one short line on how you proved the
+   change, plus the review outcome (rounds, verdict) in a collapsed `<details>`
+   block.
 5. **Babysit** with `babysit-pr`. Fix real findings and CI failures. Prove each
    fix before pushing it.
 6. **Merge** when the merge gate passes.
@@ -113,14 +113,35 @@ All true on the latest head:
 
 - Proof covers every change in the diff.
 - Gating checks green.
-- Review bots finished (`pr-wait --until ready` exited 0); each finding fixed
-  or dismissed with a written reason.
+- Readiness watcher (`--until ready`) exited 0; required approval and bot
+  review gates passed. Each finding fixed or dismissed with a written reason.
 - No human review still requests changes.
-- Branch up to date with the default branch; GitHub reports it mergeable.
+- GitHub reports it mergeable. Rebase only on DIRTY, BEHIND (strict checks),
+  or to repair a merge-queue drop/failure. Base movement or file overlap alone
+  does not require rebasing; the merge queue tests against the latest base.
 
-Merge with the method the repo uses (`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`,
-recent merged PRs). Merge queue or auto-merge → enqueue, then watch with
-`pr-wait <n> --until any-change` until it reports merged; handle failures.
+Re-check the gate on the live head immediately before merging. Without a queue,
+use the repo's merge method (`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`,
+recent merged PRs).
+
+Standalone PR with required merge queue → enqueue directly. `gh pr merge`
+can fail with `Auto merge is not allowed`. Get the PR node ID (`id`) and verify
+the head (`sha`) with `gh pr view <n> --json id,headRefOid`, then run in tmux:
+
+```bash
+gh api graphql -f query='mutation($id:ID!,$sha:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$sha}){mergeQueueEntry{position state}}}' -f id="$id" -f sha="$sha" &&
+  ~/.pi/agent/skills/babysit-pr/scripts/pr-wait "$n" --until merged
+```
+
+Set `n` to the PR number. For a PR in a GitHub stack, `enqueuePullRequest`
+fails with `must be enqueued using the asynchronous merge REST API`.
+`gh stack merge <pr>` also merges every unmerged layer below `<pr>`. List that
+exact merge set; each PR in it needs the user's merge authorization and a
+passing gate. Then run `gh stack merge <pr> --yes`, then
+`~/.pi/agent/skills/babysit-pr/scripts/pr-wait <n> --until merged`.
+
+Queue drop or merge-group failure → inspect, fix, recheck the gate, re-enqueue.
+For non-queue auto-merge, use the same watcher once enabled.
 Never use `--admin` or any branch-protection bypass. Automated "needs human
 review" notes may be ignored when confidence is high. A required human
 approval may not: ask the user.

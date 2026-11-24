@@ -71,10 +71,12 @@ Agent harnesses differ, so always pass the flags below instead of relying on tha
 ```bash
 gh stack down                   # or: gh stack checkout api
 git add ... && git commit -m "Add get-user endpoint"
-gh stack rebase --upstack       # replay every branch above onto the change
+gh stack rebase --upstack --no-trunk  # replay layers above; preserve trunk base
 gh stack top                    # return to where you were
 gh stack push
 ```
+
+Refresh trunk separately, only when intentionally moving onto newer trunk.
 
 ## Core loop
 
