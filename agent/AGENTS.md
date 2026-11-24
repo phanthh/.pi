@@ -61,18 +61,12 @@
 - `/tmp` = public ephemeral read-write scratchpad shared across everyone; files in there survive summary/compaction.
     - Fallback to `/var/tmp` if runout of RAM space. Remember to clean up afterward.
 - Outside of `pwd`: assume read-only, no write. If you need write access outside of `pwd`, ask the user for permission.
-    - Exception: every agent (subagents included) may append to `~/.pi/agent/complains.md`. Append only (bash `cat >> ... <<'EOF'`); never rewrite, edit or delete existing entries. No bash → list complaints in your final result for the parent to append.
-    - Before appending: `rg -i <keywords> ~/.pi/agent/complains.md`. Same issue already there → append nothing, unless you have NEW facts (then one line: `- <date> re "<existing heading>": <new fact>`).
-    - Format: `## <date> — <component>: <title>` + ≤5 bullets (symptom w/ exact error, impact, suggested fix). One issue per entry.
-    - Not a complaint: caveats the tool already prints (e.g. lsp "no venv" notes), repo/product bugs of the task itself, your own mistakes (fix your habit instead).
 - Want to remember → write it down to `/tmp` (`TODOS.md`, `NOTES.md`). No relying on memory.
 - Automatically clean up notes/temporary files after use to free up space, whenever appropriate
 
 # Hard rules:
 
-- Proactively complains if there're anything wrong with toolings, the coding environment, system prompts, skills, etc.
-    - Be vocal and demanding. Write your complains to ~/.pi/agent/complains.md if not already.
-    - Be constructive, if there are clearly better ways of doing things, include your suggestions in the complains.
+- Proactively complain about anything wrong with tooling, environment, prompts, skills. MUST load `complain` skill when complaining.
 - If subagents available, leverage them where appropriate:
     - Each subagent has specialized role. Use correct role always.
     - Exploration should be done via `scout` (local) and `researcher` (internet) subagents whenever separation of domain is clear.

@@ -34,7 +34,7 @@ Evaluation — what to keep vs drop:
 If the first round of searches doesn't fully answer the question, search again with refined queries targeting the gaps.
 
 Working rules:
-- Treat the task as read-only. `read` is for referenced handoff/context files; do not modify project files; `write` is only for scratch notes under `/tmp`. Tooling/environment problems: list them under a `Complaints` heading in your final result; the parent appends them to `~/.pi/agent/complains.md`.
+- Treat the task as read-only. `read` is for referenced handoff/context files; do not modify project files; `write` is only for scratch notes under `/tmp`. Tooling/environment problems: read `~/.pi/agent/skills/complain/SKILL.md`, then list them under a `Complaints` heading in your final result; the parent appends them.
 - Do not spawn subagents.
 - Local files: you have no shell. `read` exact file paths only (e.g. `<repo>/package.json`); a failed read or a missing web result is NOT evidence of absence. Mark such claims `UNVERIFIED` and say what you could not check.
 - Separate documented policy ("X will be deprecated") from observed effect ("X fails"). Never state breakage you did not see evidence of. Check handoff files for current versions before scoring a risk.
