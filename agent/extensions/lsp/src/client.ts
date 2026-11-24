@@ -21,6 +21,12 @@ const WATCH_DEBOUNCE_MS = 200;
 const MAX_WATCHERS = 5_000;
 const IGNORED_DIRS = /^(?:node_modules|\.git|dist|build|__pycache__|\.next|\.turbo|target|\.mypy_cache|\.pytest_cache)$/;
 
+/** Vanished (atomic dir swaps, temp dirs) or unreadable (Docker-owned data) paths: skip, not "degraded". */
+function benign(err: unknown) {
+	const code = (err as NodeJS.ErrnoException | undefined)?.code;
+	return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM";
+}
+
 function within(root: string, file: string) {
 	const rel = relative(root, file);
 	return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -243,7 +249,7 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 			} catch (err) {
 				delete pushed[file];
 				if (!existsSync(file)) close(file);
-				else warnWatch(err);
+				else if (!benign(err)) warnWatch(err);
 			}
 		}
 		const events = watched.map(([file, type]) => ({ uri: pathToFileURL(file).href, type }));
@@ -289,7 +295,7 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 			}
 		} catch (err) {
 			if (watchers.get(dir) !== owner) return;
-			if (!existsSync(dir)) closeTree(dir);
+			if (!existsSync(dir) || benign(err)) closeTree(dir);
 			else warnWatch(err);
 		} finally {
 			if (scans.get(dir) === owner) scans.delete(dir);
@@ -333,17 +339,21 @@ export async function createClient(server: ServerDef, root: string): Promise<Cli
 							if (stats?.isDirectory()) watchDirectory(file, true, false);
 						}
 					}
-				} catch (err) { warnWatch(err); }
+				} catch (err) {
+					if (!benign(err)) warnWatch(err);
+				}
 			});
 			watchers.set(dir, watcher);
 			if (recursive) recursiveDirs.add(dir);
 			watcher.unref();
 			watcher.on("error", (err) => {
 				closeTree(dir);
-				warnWatch(err);
+				if (!benign(err) || dir === root) warnWatch(err);
 			});
 			if (recursive) void scanDirectory(dir, initial);
-		} catch (err) { warnWatch(err); }
+		} catch (err) {
+			if (!benign(err) || dir === root) warnWatch(err);
+		}
 	}
 	watchDirectory(root, true);
 

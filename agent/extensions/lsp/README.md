@@ -42,8 +42,13 @@ also receive a parent-directory watcher.
 Events from `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.next`, `.turbo`, `target`,
 `.mypy_cache`, `.pytest_cache`, and `.venv`/`venv` internals are ignored, unless the affected file
 is explicitly open. Creation or deletion of the venv directory itself is not ignored.
-An `ENOSPC`, `EACCES`, watcher-cap limit, or other watcher failure produces one warning in the next
-result for that client; pi continues, and explicit calls still synchronize the requested file.
+Paths that vanish (`ENOENT`/`ENOTDIR`, e.g. atomic `.contracts.old.<pid>` swaps) or are unreadable
+(`EACCES`/`EPERM`, e.g. Docker-owned `data/db`) are skipped silently. An `ENOSPC`, watcher-cap
+limit, root failure, or other watcher failure produces one warning in the next result for that
+client; pi continues, and explicit calls still synchronize the requested file.
+
+Results are capped like `read`/`bash` (2000 lines / 50KB); the full text goes to a temp file
+named in the result.
 Watchers close when their client exits, restarts, or the session shuts down.
 
 Verified runtime: Node v24.22.2 (`node:path.matchesGlob` for filters). Native recursive watching
@@ -54,6 +59,10 @@ directories are caught locally instead of escaping Node's internal recursive-wat
 
 Pyright resolves `<root>/.venv/bin/python`, then `<root>/venv/bin/python`, then a computed Poetry
 environment. It does not search child projects: for `backend/.venv`, pass `backend` as `root`.
+In a linked git worktree with none of these, it borrows the same lookup from the matching path in
+the main checkout and says so in a note (deps may lag the worktree's lockfile).
+If a `pyrefly.toml` or `[tool.pyrefly]` exists between `root` and the git toplevel, `diagnostics`
+notes that pyright is advisory and pyrefly is authoritative.
 An explicit `initialization.python.pythonPath` takes precedence. If no environment exists,
 results include a warning. Each call re-resolves the interpreter; a changed path, such as after
 `uv sync`, clears the failed-start cache and restarts the client. Previously open documents are

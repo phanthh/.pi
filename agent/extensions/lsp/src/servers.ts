@@ -4,10 +4,11 @@
  *   { [id]: { command: string[], extensions?: string[], disabled?: boolean,
  *             env?: Record<string,string>, initialization?: unknown, hint?: string } }
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export interface ServerDef {
@@ -107,7 +108,13 @@ export function resolveForRoot(server: ServerDef, root: string): ServerDef {
 	if (server.id !== "pyright") return server;
 	const init = (server.initialization ?? {}) as Record<string, Record<string, unknown> | undefined>;
 	if (init.python?.pythonPath) return server;
-	const venv = [".venv", "venv"].map((d) => join(root, d)).find((d) => existsSync(join(d, "bin", "python"))) ?? poetryVenv(root);
+	const findVenv = (dir: string) => [".venv", "venv"].map((d) => join(dir, d)).find((d) => existsSync(join(d, "bin", "python"))) ?? poetryVenv(dir);
+	let venv = findVenv(root);
+	let warning: string | undefined;
+	const main = venv ? undefined : mainCheckoutPath(root);
+	if (main && (venv = findVenv(main))) {
+		warning = `pyright: no venv in ${root}; borrowed main checkout venv ${venv}. Third-party deps may lag this worktree's lockfile.`;
+	}
 	if (!venv) {
 		return {
 			...server,
@@ -120,9 +127,38 @@ export function resolveForRoot(server: ServerDef, root: string): ServerDef {
 	const localServer = join(venv, "bin", "basedpyright-langserver");
 	return {
 		...server,
+		warning,
 		command: existsSync(localServer) ? [localServer, ...server.command.slice(1)] : server.command,
 		initialization: { ...init, python: { ...init.python, pythonPath: join(venv, "bin", "python") } },
 	};
+}
+
+/** Same path inside the main checkout when root lives in a linked git worktree. */
+function mainCheckoutPath(root: string): string | undefined {
+	try {
+		const [top, common] = execFileSync("git", ["-C", root, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], {
+			encoding: "utf8",
+			timeout: 2000,
+			stdio: ["ignore", "pipe", "ignore"],
+		})
+			.trim()
+			.split("\n");
+		if (basename(common) !== ".git" || dirname(common) === top) return undefined;
+		return join(dirname(common), relative(top, root));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Nearest pyrefly config from root up to the git toplevel: the repo's authoritative checker is not pyright. */
+export function pyreflyConfig(root: string): string | undefined {
+	for (let dir = root; ; dir = dirname(dir)) {
+		const toml = join(dir, "pyrefly.toml");
+		if (existsSync(toml)) return toml;
+		const pyproject = join(dir, "pyproject.toml");
+		if (existsSync(pyproject) && /^\[tool\.pyrefly\b/m.test(readFileSync(pyproject, "utf-8"))) return pyproject;
+		if (existsSync(join(dir, ".git")) || dirname(dir) === dir) return undefined;
+	}
 }
 
 export function which(bin: string): string | undefined {

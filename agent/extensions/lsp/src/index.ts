@@ -2,10 +2,11 @@
  * lsp — code intelligence tool (definition/references/hover/symbols/call hierarchy/diagnostics).
  * Servers spawn lazily per (server, explicit root), watch disk changes, and live for the session.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
-import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
@@ -25,7 +26,7 @@ import {
 	type WorkspaceEdit,
 } from "vscode-languageserver-protocol";
 import { type Client, createClient } from "./client.ts";
-import { loadServers, resolveForRoot, which } from "./servers.ts";
+import { loadServers, pyreflyConfig, resolveForRoot, which } from "./servers.ts";
 
 const OPERATIONS = [
 	"goToDefinition",
@@ -57,6 +58,15 @@ const POSITIONAL = new Set<string>([
 	"codeAction",
 ]);
 const MAX_DIAGNOSTICS = 50;
+
+/** Same limits as read/bash (2000 lines / 50KB); full text saved to a temp file. */
+function cap(text: string): string {
+	const t = truncateHead(text);
+	if (!t.truncated) return text;
+	const file = join(mkdtempSync(join(tmpdir(), "pi-lsp-")), "output.txt");
+	writeFileSync(file, text);
+	return `${t.content}\n[Truncated: ${t.outputLines} of ${t.totalLines} lines shown. Full output: ${file}]`;
+}
 
 const DESCRIPTION = `Language Server Protocol code intelligence. Operations:
 - goToDefinition, typeDefinition, findReferences, hover, goToImplementation: need filePath + line + character (1-based)
@@ -201,6 +211,8 @@ export default function (pi: ExtensionAPI) {
 					...(reports[i] === undefined ? [`${c.id}: no diagnostics report received in time (server may still be analyzing); this is NOT a clean result. Retry.`] : []),
 					...c.warnings(),
 				]);
+				const pyrefly = clients.some((c) => c.id === "pyright") ? pyreflyConfig(root) : undefined;
+				if (pyrefly) notes.push(`repo gates on pyrefly (${rel(pyrefly)}); pyright diagnostics are advisory and may differ. Run pyrefly for the authoritative result.`);
 				const text = [formatDiagnostics(items, rel(file)), ...notes.map((n) => `Note: ${n}`)].join("\n");
 				return { content: [{ type: "text", text }], details: { count: items.length } };
 			}
@@ -302,7 +314,7 @@ export default function (pi: ExtensionAPI) {
 			})();
 
 			const notes = clients.flatMap((c) => c.warnings()).map((n) => `Note: ${n}`);
-			return { content: [{ type: "text", text: [text || `No results for ${params.operation}`, ...notes].join("\n") }], details: {} };
+			return { content: [{ type: "text", text: [cap(text) || `No results for ${params.operation}`, ...notes].join("\n") }], details: {} };
 		},
 
 		renderCall(args, theme) {
