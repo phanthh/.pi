@@ -27,8 +27,10 @@ approval prompts.
 
 ## Steps
 
-1. **Finish the change.** Smallest change that reaches the goal. Fix the case
-   that happened, not every case that could. On the default branch → create a
+1. **Finish the change.** Smallest change that reaches the goal; follow the
+   `software` skill. Fix the root cause in the right place: one fix in a
+   shared function also covers its sibling callers. Do not extend the fix to
+   unrelated cases that could happen. On the default branch → create a
    branch first. Dirty tree with unrelated work → use a worktree in `/var/tmp`.
 2. **Prove it.** See "Proof".
 3. **Review loop** with the `reviewer` subagent. See "Review loop".
@@ -70,7 +72,8 @@ files in scope while a round runs.
 
 **Budget:** 3 rounds. Up to 5 only for security, auth/permissions, data loss,
 or state/concurrency while a P0/P1 stays open with evidence. Stop early when a
-round returns only P3. Comment/doc/format-only fixes need no new round.
+round returns only P3. Comment/doc/format-only fixes and deletion-only P3
+fixes need no new round.
 
 **Round 1 brief** (self-contained):
 
@@ -84,12 +87,15 @@ Hold to the smallest change that meets the intent. Use stable ids F1, F2, …
 
 **Each finding:** check it and its priority yourself. Other paths, rare cases,
 small cost, extra compat → P3, whatever label it came with, unless it causes
-security or data loss.
+security or data loss. A fix placed in one caller while the same root cause
+breaks sibling callers is P2, not "other paths".
 
 - Agree → smallest fix. Prefer delete or narrow over a new lock, cache, helper,
   or option.
 - Disagree → reason with evidence (file:line, test, output).
-- P3 / out of scope → decline in one line, list as follow-up.
+- P3 whose remedy deletes, narrows, or reuses existing code in the diff → fix
+  it. Simplification is never declined as low priority.
+- Other P3 / out of scope → decline in one line, list as follow-up.
 
 Keep `ledger.md`: id, priority, outcome (`fixed` / `disagree: <evidence>` /
 `declined: <reason>`). Re-run checks and `git diff --shortstat <base>` after
