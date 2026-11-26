@@ -27,11 +27,8 @@ approval prompts.
 
 ## Steps
 
-1. **Finish the change.** Smallest change that reaches the goal; follow the
-   `software` skill. Fix the root cause in the right place: one fix in a
-   shared function also covers its sibling callers. Do not extend the fix to
-   unrelated cases that could happen. On the default branch → create a
-   branch first. Dirty tree with unrelated work → use a worktree in `/var/tmp`.
+1. **Finish the change** per the `software` skill. On the default branch →
+   create a branch first. Dirty tree with unrelated work → use a worktree in `/var/tmp`.
 2. **Prove it.** See "Proof".
 3. **Review loop** with the `reviewer` subagent. See "Review loop".
 4. **File the PR** with `file-pr`. Add one short line on how you proved the
@@ -82,24 +79,19 @@ Review target: repo <abs path>, base <merge-base sha>.
 Diff: git diff <base> [-- <paths>]; also read untracked files from git status --short.
 Intent: <1-2 sentences>. Out of scope: <…>.
 Checks run: <command → result; missing or pre-failing checks>.
-Hold to the smallest change that meets the intent. Use stable ids F1, F2, …
+Use stable ids F1, F2, …
 ```
 
-**Each finding:** check it and its priority yourself. Other paths, rare cases,
-small cost, extra compat → P3, whatever label it came with, unless it causes
-security or data loss. A fix placed in one caller while the same root cause
-breaks sibling callers is P2, not "other paths".
+**Each finding:** check it and its priority yourself against the `software`
+skill's Review section, whatever label it came with.
 
-- Agree → smallest fix. Prefer delete or narrow over a new lock, cache, helper,
-  or option.
+- Agree → fix per that section.
 - Disagree → reason with evidence (file:line, test, output).
-- P3 whose remedy deletes, narrows, or reuses existing code in the diff → fix
-  it. Simplification is never declined as low priority.
-- Other P3 / out of scope → decline in one line, list as follow-up.
+- Other P3 or out of scope → decline in one line, list as follow-up.
 
 Keep `ledger.md`: id, priority, outcome (`fixed` / `disagree: <evidence>` /
 `declined: <reason>`). Re-run checks and `git diff --shortstat <base>` after
-fixes. Review grew the diff → cut first. Never agree just to end the loop.
+fixes. Never agree just to end the loop.
 
 **Next round** only when budget remains and a P0–P2 is open, behavior code
 changed, or the last verdict does not cover the current diff. Resume the same

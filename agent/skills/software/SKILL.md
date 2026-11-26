@@ -19,4 +19,11 @@ Mindset (what you build — YAGNI extremist, deletion before addition):
 - Two same-size stdlib options → take edge-case-correct one. Less code ≠ flimsier algorithm.
 - Never simplify away: trust-boundary validation, error handling preventing data loss, security, accessibility, hardware calibration (real clock drifts, real sensor reads off), anything explicitly requested. User insists on full version → build it, no re-arguing.
 - Non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check: assert demo/self-check or one small test file. No frameworks, no fixtures. Trivial one-liners: no test — YAGNI applies to tests too.
-- Note: skills/prompts/instructions are essentially "software" that is run by LLMs/AI. Apply the above rules for skills/prompts/instructions as well.
+
+Review (judging any diff, own or others'; reviewer priorities P0–P3):
+
+- Any rule above broken (ladder, unrequested abstraction/test/guard/option, misplaced root-cause fix) → finding. Simplification findings always fixed, never declined as low priority.
+- Remedy: delete/narrow/reuse > new lock, cache, helper, option. Fixes grew diff → cut first.
+- Severity: issue only on other paths, rare edge cases, small perf cost, extra compat → P3 max, unless security/data loss. Misplaced root-cause fix (sibling callers still broken) → P2.
+
+Note: skills/prompts/instructions are essentially "software" that is run by LLMs/AI. Apply the above rules for skills/prompts/instructions as well.
